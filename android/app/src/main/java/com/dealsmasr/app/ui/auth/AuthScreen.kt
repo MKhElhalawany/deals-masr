@@ -79,7 +79,7 @@ fun AuthScreen(notConfigured: Boolean) {
         Mode.LOGIN -> password.isNotEmpty()
         Mode.SIGNUP -> password.length >= 6 && name.trim().length >= 2 && EG_PHONE.matches(phone.replace(" ", ""))
         Mode.RESET -> true
-        Mode.OWNER -> !codeSent || code.length == 6
+        Mode.OWNER -> !codeSent || code.length in 6..10
     }
 
     fun submit() {
@@ -94,7 +94,8 @@ fun AuthScreen(notConfigured: Boolean) {
                     }
                     Mode.RESET -> { auth.resetPassword(email); info = "لو الإيميل متسجل، هتوصلك رسالة لتغيير كلمة السر."; mode = Mode.LOGIN }
                     Mode.OWNER -> if (!codeSent) {
-                        auth.sendOwnerCode(email); codeSent = true; info = "بعتنا كود من 6 أرقام على $email"
+                        auth.sendOwnerCode(email); codeSent = true
+                        info = "بعتنا رسالة على $email — افتحها على الموبايل ده واضغط اللينك، هيفتح التطبيق وتدخل على طول. (لو وصلك كود بدل اللينك اكتبه تحت.)"
                     } else {
                         // on success the app opens automatically (signed-in state)
                         if (!auth.ownerSignIn(email, code)) info = "دخلت كمستخدم عادي — الإيميل ده مش إيميل صاحب المتجر"
@@ -144,8 +145,8 @@ fun AuthScreen(notConfigured: Boolean) {
                             isError = email.isNotEmpty() && !emailOk,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
                         if (m == Mode.OWNER && codeSent) {
-                            OutlinedTextField(code, { code = it.filter(Char::isDigit).take(6) }, Modifier.fillMaxWidth(),
-                                label = { Text("الكود اللي وصلك على الإيميل") }, singleLine = true,
+                            OutlinedTextField(code, { code = it.filter(Char::isDigit).take(10) }, Modifier.fillMaxWidth(),
+                                label = { Text("الكود (لو وصلك كود بدل اللينك)") }, singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done))
                         }
                         if (m == Mode.LOGIN || m == Mode.SIGNUP) {
@@ -165,7 +166,7 @@ fun AuthScreen(notConfigured: Boolean) {
                             if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
                             else Text(when (m) {
                                 Mode.LOGIN -> "دخول"; Mode.SIGNUP -> "إنشاء الحساب"; Mode.RESET -> "ابعت لينك التغيير"
-                                Mode.OWNER -> if (codeSent) "تأكيد الكود" else "ابعت الكود"
+                                Mode.OWNER -> if (codeSent) "تأكيد الكود" else "ابعت لينك الدخول"
                             })
                         }
                         Spacer(Modifier.height(2.dp))
@@ -178,7 +179,7 @@ fun AuthScreen(notConfigured: Boolean) {
                                     Text("نسيت كلمة السر؟")
                                 }
                                 TextButton(onClick = { mode = Mode.OWNER; codeSent = false; code = ""; error = null; info = null }, Modifier.fillMaxWidth()) {
-                                    Text("صاحب المتجر؟ ادخل بكود على الإيميل", style = MaterialTheme.typography.labelMedium)
+                                    Text("صاحب المتجر؟ ادخل بلينك على الإيميل", style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                             else -> TextButton(onClick = { mode = Mode.LOGIN; codeSent = false; error = null }, Modifier.fillMaxWidth()) {

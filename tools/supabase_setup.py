@@ -138,24 +138,24 @@ def wait_healthy(ref):
     fail("Project did not become healthy in time — rerun the workflow in a few minutes.")
 
 
-OTP_EMAIL = """<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;font-size:16px">
-<p>كود الدخول لتطبيق <b>عروض مصر</b>:</p>
-<p style="font-size:32px;letter-spacing:6px"><b>{{ .Token }}</b></p>
-<p>لو مش انت اللي طلبته تجاهل الرسالة.</p></div>"""
+APP_REDIRECT = "dealsmasr://login"   # owner login link opens the app (Android deep link)
 
 
 def configure_auth(ref):
+    # Free tier can't edit e-mail templates without custom SMTP, so we only set what is allowed:
+    # the default "magic link" e-mail is used for the owner login and redirects into the app.
+    current = api("GET", f"/projects/{ref}/config/auth") or {}
+    allow = [u for u in (current.get("uri_allow_list") or "").split(",") if u.strip()]
+    if APP_REDIRECT not in allow:
+        allow.append(APP_REDIRECT)
     api("PATCH", f"/projects/{ref}/config/auth", {
         "external_email_enabled": True,
         "mailer_autoconfirm": True,          # testing: sign-up logs in immediately (turn off before launch)
         "password_min_length": 6,
         "disable_signup": False,
-        "mailer_otp_length": 6,
-        "mailer_otp_exp": 600,
-        "mailer_subjects_magic_link": "كود الدخول — عروض مصر",
-        "mailer_templates_magic_link_content": OTP_EMAIL,   # owner login code
+        "uri_allow_list": ",".join(allow),
     })
-    log("Auth configured ✓ (email+password, auto-confirm for testing, 6-digit owner login code)")
+    log("Auth configured ✓ (email+password, auto-confirm for testing, owner login link → app)")
 
 
 def owner_email():

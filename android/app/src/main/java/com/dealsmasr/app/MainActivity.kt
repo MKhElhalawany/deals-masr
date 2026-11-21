@@ -91,6 +91,17 @@ class MainActivity : ComponentActivity() {
 
     private fun handleIntent(intent: Intent?) {
         intent ?: return
+        val data = intent.data
+        if (data != null && data.scheme == "dealsmasr" && data.host == "login") {
+            val fragment = data.encodedFragment ?: data.encodedQuery ?: ""
+            val auth = (application as DealsApp).container.auth
+            lifecycleScope.launch {
+                val msg = runCatching { auth.completeLoginLink(fragment) }
+                    .fold({ owner -> if (owner) "أهلاً يا صاحب المتجر — بقيت أدمن ✓" else "تم تسجيل الدخول" }, { it.message ?: "تعذر تسجيل الدخول" })
+                android.widget.Toast.makeText(this@MainActivity, msg, android.widget.Toast.LENGTH_LONG).show()
+            }
+            return
+        }
         if (intent.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
             sharedText = text

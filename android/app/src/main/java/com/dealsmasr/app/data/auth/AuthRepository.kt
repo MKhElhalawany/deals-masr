@@ -124,6 +124,14 @@ class AuthRepository(
 
     suspend fun sendOwnerCode(email: String) = supabase.sendOtp(email.trim())
 
+    /** Login link tapped in the e-mail → app opened with the tokens. Returns true if this is the owner. */
+    suspend fun completeLoginLink(fragment: String): Boolean {
+        supabase.sessionFromRedirect(fragment)
+        val isOwner = runCatching { supabase.rpc("claim_owner").trim() == "true" }.getOrDefault(false)
+        afterLogin()
+        return isOwner
+    }
+
     /** Code login; grants admin only if this is the owner's e-mail (checked by the database). */
     suspend fun ownerSignIn(email: String, code: String): Boolean {
         supabase.verifyOtp(email.trim(), code.trim())

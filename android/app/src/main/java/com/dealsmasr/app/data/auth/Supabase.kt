@@ -46,6 +46,8 @@ data class Session(
     val email: String? = null,
 )
 
+const val APP_REDIRECT = "dealsmasr://login"
+
 class SupabaseException(val status: Int, override val message: String) : Exception(message)
 
 /** Tokens live only in Keystore-encrypted prefs; passwords are never stored. */
@@ -158,9 +160,24 @@ class Supabase(private val store: SessionStore, private val json: Json) {
             ?: throw SupabaseException(0, "رد غير متوقع من الخادم"))
     }
 
-    /** Sends a 6-digit login code to [email] (creates the user if needed). */
-    suspend fun sendOtp(email: String) {
-        call("POST", "/auth/v1/otp", buildJsonObject { put("email", email); put("create_user", true) }.toString(), null)
+    /** E-mails a one-time login link (and code, if the template has one) that opens the app at [redirect]. */
+    suspend fun sendOtp(email: String, redirect: String = APP_REDIRECT) {
+        call("POST", "/auth/v1/otp?redirect_to=" + java.net.URLEncoder.encode(redirect, "UTF-8"),
+            buildJsonObject { put("email", email); put("create_user", true) }.toString(), null)
+    }
+
+    /** Completes a login-link redirect: `dealsmasr://login#access_token=…&refresh_token=…`. */
+    suspend fun sessionFromRedirect(fragment: String) {
+        val p = fragment.removePrefix("#").split("&").mapNotNull {
+            it.split("=", limit = 2).takeIf { kv -> kv.size == 2 }?.let { kv -> kv[0] to java.net.URLDecoder.decode(kv[1], "UTF-8") }
+        }.toMap()
+        p["error_description"]?.let { throw SupabaseException(400, if (p["error_code"] == "otp_expired") "اللينك انتهى — اطلب لينك جديد" else it) }
+        val access = p["access_token"] ?: throw SupabaseException(400, "لينك الدخول ناقص")
+        val refresh = p["refresh_token"] ?: throw SupabaseException(400, "لينك الدخول ناقص")
+        val user = json.parseToJsonElement(call("GET", "/auth/v1/user", null, access)).jsonObject
+        val expiresAt = p["expires_at"]?.toLongOrNull()
+            ?: (System.currentTimeMillis() / 1000 + (p["expires_in"]?.toLongOrNull() ?: 3600))
+        setSession(Session(access, refresh, expiresAt, user["id"]!!.jsonPrimitive.content, user["email"]?.jsonPrimitive?.content))
     }
 
     suspend fun verifyOtp(email: String, code: String) {
