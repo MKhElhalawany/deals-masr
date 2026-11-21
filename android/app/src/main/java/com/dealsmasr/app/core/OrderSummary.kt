@@ -23,6 +23,7 @@ data class SummaryOrder(
     val items: List<SummaryItem>,
     val breakdown: OrderBreakdown,
     val createdAtMillis: Long,
+    val notes: String? = null,
 )
 
 /** Builds the WhatsApp order message (Arabic). */
@@ -47,11 +48,12 @@ object OrderSummary {
             )
             appendLine(attrs.joinToString(" | "))
             it.notes?.takeIf { s -> s.isNotBlank() }?.let { s -> appendLine("📝 $s") }
-            appendLine("السعر: ${Money.sar(it.line.sarUnit)} × ${it.quantity} = ${Money.egp(it.line.lineTotalEgp)}")
+            appendLine("السعر: ${Money.egp(it.line.lineTotalEgp)}")
             appendLine()
         }
+        if (!o.notes.isNullOrBlank()) appendLine("📝 ملاحظات العميل: ${o.notes}")
         appendLine("————————")
-        appendLine("إجمالي المنتجات: ${Money.egp(o.breakdown.subtotalEgp)}")
+        appendLine("سعر المنتجات: ${Money.egp(o.breakdown.subtotalEgp)}")
         appendLine("التوصيل: ${Money.egp(o.breakdown.deliveryFeeEgp)}")
         append("💰 الإجمالي المطلوب: ${Money.egp(o.breakdown.totalEgp)}")
     }

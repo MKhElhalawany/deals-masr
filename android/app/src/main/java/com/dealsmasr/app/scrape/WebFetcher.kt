@@ -24,10 +24,14 @@ class WebFetcher(private val context: Context) {
     private val main = Handler(Looper.getMainLooper())
 
     suspend fun render(url: String, settleMs: Long = 3500, timeoutMs: Long = 35_000): String? =
+        renderWithUrl(url, settleMs, timeoutMs)?.second
+
+    /** Returns (final URL after redirects, HTML). */
+    suspend fun renderWithUrl(url: String, settleMs: Long = 3500, timeoutMs: Long = 35_000): Pair<String, String>? =
         withTimeoutOrNull(timeoutMs) { withContext(Dispatchers.Main) { load(url, settleMs) } }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private suspend fun load(url: String, settleMs: Long): String? = suspendCancellableCoroutine { cont ->
+    private suspend fun load(url: String, settleMs: Long): Pair<String, String>? = suspendCancellableCoroutine { cont ->
         val wv = WebView(context.applicationContext)
         CookieManager.getInstance().setAcceptCookie(true)
         wv.settings.javaScriptEnabled = true
@@ -40,8 +44,9 @@ class WebFetcher(private val context: Context) {
         fun finish(html: String?) {
             if (done) return
             done = true
+            val finalUrl = wv.url ?: url
             main.post { runCatching { wv.stopLoading(); wv.destroy() } }
-            if (cont.isActive) cont.resume(html)
+            if (cont.isActive) cont.resume(html?.let { finalUrl to it })
         }
 
         fun grab(round: Int) {

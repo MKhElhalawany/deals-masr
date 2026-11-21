@@ -21,6 +21,11 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore("settings")
 
+/** Orders are sent to this WhatsApp number (shop owner). */
+const val OWNER_WHATSAPP = "201050038728"
+/** PIN for the hidden admin settings (tap the app title 7 times). */
+const val ADMIN_PIN = "8728"
+
 val DEFAULT_KEYWORDS = listOf(
     "air fryer", "smart watch", "headphones", "laptop", "mobile phone", "perfume", "vacuum cleaner",
     "blender", "coffee maker", "television", "sneakers", "power bank",
@@ -46,6 +51,8 @@ data class AppSettings(
     val liveIntervalSec: Int,
     val liveWifiOnly: Boolean,
     val notifyMinPct: Int,
+    val adminMode: Boolean,
+    val celebrated: Set<String>,
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -54,7 +61,7 @@ data class AppSettings(
         get() = config?.sheinPricing?.let { SheinPricingConfig.of(it.sarToEgp, it.multiplier, it.deliveryFeeEgp) }
             ?: SheinPricingConfig()
     val countdownDays get() = config?.orderCountdownDays ?: OrderCountdown.DEFAULT_DAYS
-    val whatsappNumber get() = config?.whatsappNumber.orEmpty()
+    val whatsappNumber get() = config?.whatsappNumber?.takeIf { it.isNotBlank() } ?: OWNER_WHATSAPP
 }
 
 class SettingsStore(private val context: Context, private val json: Json) {
@@ -79,6 +86,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val liveInterval = intPreferencesKey("live_interval")
         val wifiOnly = booleanPreferencesKey("live_wifi_only")
         val notifyMin = intPreferencesKey("notify_min_pct")
+        val admin = booleanPreferencesKey("admin_mode")
+        val celebrated = stringPreferencesKey("celebrated_orders")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -102,6 +111,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         liveIntervalSec = this[K.liveInterval] ?: 20,
         liveWifiOnly = this[K.wifiOnly] ?: false,
         notifyMinPct = this[K.notifyMin] ?: 10,
+        adminMode = this[K.admin] ?: false,
+        celebrated = (this[K.celebrated] ?: "").split(",").filter { it.isNotBlank() }.toSet(),
         extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
     )
 
@@ -115,6 +126,10 @@ class SettingsStore(private val context: Context, private val json: Json) {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
     suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    suspend fun setAdminMode(v: Boolean) = context.dataStore.edit { it[K.admin] = v }
+    suspend fun markCelebrated(orderId: String) = context.dataStore.edit {
+        it[K.celebrated] = ((it[K.celebrated] ?: "").split(",").filter { x -> x.isNotBlank() } + orderId).takeLast(200).joinToString(",")
+    }
     suspend fun setLiveScan(v: Boolean) = context.dataStore.edit { it[K.live] = v }
     suspend fun setLiveInterval(v: Int) = context.dataStore.edit { it[K.liveInterval] = v }
     suspend fun setLiveWifiOnly(v: Boolean) = context.dataStore.edit { it[K.wifiOnly] = v }

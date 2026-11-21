@@ -142,6 +142,7 @@ data class OrderEntity(
     val synced: Boolean,
     val notifiedMilestones: String = "",
     val whatsappText: String,
+    val notes: String? = null,
 )
 
 @Dao
@@ -202,7 +203,7 @@ interface OrderDao {
 @Database(
     entities = [DealEntity::class, FavoriteEntity::class, AlertEntity::class, CartItemEntity::class, OrderEntity::class,
         PricePointEntity::class],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -214,7 +215,13 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "deals.db").addMigrations(MIGRATION_1_2).build()
+            Room.databaseBuilder(context, AppDatabase::class.java, "deals.db").addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `orders` ADD COLUMN `notes` TEXT")
+            }
+        }
 
         val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {

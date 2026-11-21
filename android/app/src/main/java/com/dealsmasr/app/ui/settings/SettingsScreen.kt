@@ -108,8 +108,8 @@ fun SettingsScreen(onBack: () -> Unit) {
     }) { pad ->
         val st = s ?: return@Scaffold
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            if (!st.hasServer) Section("المراقبة المباشرة (حتى والأبليكيشن مقفول)") {
-                Toggle("تشغيل المراقبة المباشرة", st.liveScan) { on ->
+            if (!st.hasServer) Section("تنبيهات العروض الفورية") {
+                Toggle("نبهني بأي عرض جديد أول ما ينزل", st.liveScan) { on ->
                     scope.launch {
                         c.settings.setLiveScan(on)
                         if (on) {
@@ -118,15 +118,14 @@ fun SettingsScreen(onBack: () -> Unit) {
                         } else LiveScanService.stop(ctx)
                     }
                 }
-                Text("بيقرا صفحة كل:", style = MaterialTheme.typography.bodySmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (st.adminMode) Text("أدمن — بيقرا صفحة كل:", style = MaterialTheme.typography.bodySmall)
+                if (st.adminMode) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(10, 20, 30, 60).forEach { sec ->
                         FilterChip(selected = st.liveIntervalSec == sec, onClick = { scope.launch { c.settings.setLiveInterval(sec) } },
                             label = { Text("$sec ث") })
                     }
                 }
-                Text("كل متجر بيتقري بالدور، فكل ما الرقم يقل التحديث يبقى أسرع بس استهلاك النت والبطارية يزيد واحتمال الحجب يزيد. " +
-                    "تقريباً: كل 20 ثانية ≈ 100–150 ميجا في الساعة.",
+                Text("التطبيق بيفضل يتابع أمازون وجوميا ونون في الخلفية. بيستهلك نت وبطارية، فلو على باقة فعّل «على Wi-Fi بس».",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Toggle("على Wi-Fi بس", st.liveWifiOnly) { on -> scope.launch { c.settings.setLiveWifiOnly(on) } }
                 Text("ابعتلي إشعار من خصم:", style = MaterialTheme.typography.bodySmall)
@@ -144,7 +143,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }) { Text("اسمح بالشغل في الخلفية (البطارية)") }
             }
-            if (!st.hasServer) Section("القراءة المباشرة من المواقع") {
+            if (!st.hasServer && st.adminMode) Section("أدمن: القراءة المباشرة من المواقع") {
                 Text("التطبيق بيقرا صفحات العروض من المواقع كل 10 دقايق وهو مفتوح، وكل 15 دقيقة في الخلفية.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 listOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر").forEach { (id, name) ->
@@ -174,7 +173,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
                 refreshMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             }
-            Section("خادم العروض (اختياري)") {
+            if (st.adminMode) Section("أدمن: خادم العروض (اختياري)") {
                 OutlinedTextField(url.orEmpty(), { url = it }, Modifier.fillMaxWidth(), label = { Text("عنوان الخادم") },
                     placeholder = { Text("https://api.example.com") }, singleLine = true)
                 Button(onClick = { test() }) { Text("حفظ واختبار الاتصال") }
@@ -205,7 +204,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                         scope.launch { c.settings.setNotifications(on) }
                     }
                 }
-                Toggle("تنبيه بالعروض الكبيرة (خصم 50%+)", st.majorDealAlerts) { on -> scope.launch { c.settings.setMajorDeals(on) } }
+
             }
             Section("تنبيهات الأسعار") {
                 if (alerts.isEmpty()) Text("مفيش تنبيهات. اعمل تنبيه من شاشة البحث.", style = MaterialTheme.typography.bodySmall)
@@ -220,12 +219,22 @@ fun SettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            Section("معادلة تسعير SHEIN") {
+            if (st.adminMode) Section("أدمن: معادلة تسعير SHEIN") {
                 val p = st.pricing
                 Text("(السعر الأصلي بالريال × ${p.sarToEgp.toPlainString()} × ${p.multiplier.toPlainString()}) + ${Money.egp(p.deliveryFeeEgp)} توصيل لكل طلب")
                 val ex = BigDecimal(100).multiply(p.sarToEgp).multiply(p.multiplier).add(p.deliveryFeeEgp)
                 Text("مثال: منتج بـ 100 ر.س = ${Money.egp(ex)}", style = MaterialTheme.typography.bodySmall)
                 Text("القيم بتتحدد من لوحة التحكم.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = {
+                    scope.launch {
+                        c.shein.diagnosticFile()?.let { f ->
+                            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
+                            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
+                                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "تشخيص SHEIN"))
+                        } ?: run { refreshMsg = "لسه مفيش صفحة SHEIN اتقرت" }
+                    }
+                }) { Text("تشخيص آخر صفحة SHEIN") }
+                OutlinedButton(onClick = { scope.launch { c.settings.setAdminMode(false) } }) { Text("خروج من وضع الأدمن") }
             }
         }
     }

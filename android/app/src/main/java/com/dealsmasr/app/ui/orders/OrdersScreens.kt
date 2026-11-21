@@ -141,10 +141,11 @@ private fun OrderRow(o: OrderEntity, now: Long, onClick: () -> Unit) {
             val confirmed = o.confirmedAt
             if (confirmed != null && o.status !in setOf("delivered", "cancelled")) {
                 val left = OrderCountdown.daysRemaining(confirmed, now, o.countdownDays)
-                Text(OrderCountdown.remainingText(left), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(OrderCountdown.remainingRangeText(confirmed, now, OrderCountdown.MIN_DAYS, o.countdownDays),
+                    color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                 LinearProgressIndicator(progress = { OrderCountdown.progress(left, o.countdownDays) }, modifier = Modifier.fillMaxWidth())
             } else if (o.status == "submitted") {
-                Text("العد التنازلي (${o.countdownDays} يوم) يبدأ بعد تأكيد الطلب", style = MaterialTheme.typography.bodySmall,
+                Text("طلبك وصلنا ✓ — بنراجعه وهنأكده لك قريب", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -156,6 +157,7 @@ private fun OrderRow(o: OrderEntity, now: Long, onClick: () -> Unit) {
 fun OrderDetailScreen(id: String, onBack: () -> Unit) {
     val c = appContainer()
     val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
     val order by c.shein.order(id).collectAsStateWithLifecycle(null)
     val settings by c.settings.settings.collectAsStateWithLifecycle(null)
     val now = rememberNow()
@@ -170,6 +172,7 @@ fun OrderDetailScreen(id: String, onBack: () -> Unit) {
         val pricing = remember(o.pricingJson) {
             runCatching { c.api.json.decodeFromString(PricingSnapshot.serializer(), o.pricingJson) }.getOrNull()
         }
+        val celebrate = o.confirmedAt != null && o.status !in setOf("cancelled") && settings != null && o.id !in settings!!.celebrated
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             CountdownCard(o, now)
             StatusTimeline(o.status)
@@ -195,7 +198,8 @@ fun OrderDetailScreen(id: String, onBack: () -> Unit) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     val cfg = com.dealsmasr.app.core.SheinPricingConfig.of(pricing?.sarToEgp, pricing?.multiplier, pricing?.deliveryFeeEgp)
                     BreakdownRows(BigDecimal(o.sarTotal), BigDecimal(o.convertedEgp), BigDecimal(o.extraEgp), BigDecimal(o.subtotalEgp),
-                        BigDecimal(o.deliveryFeeEgp), BigDecimal(o.totalEgp), cfg)
+                        BigDecimal(o.deliveryFeeEgp), BigDecimal(o.totalEgp), cfg, detailed = settings?.adminMode == true)
+                    o.notes?.let { Text("ملاحظاتك: $it", style = MaterialTheme.typography.bodySmall) }
                 }
             }
             val created = java.time.Instant.ofEpochMilli(o.createdAt).atZone(OrderCountdown.CAIRO)
@@ -210,6 +214,9 @@ fun OrderDetailScreen(id: String, onBack: () -> Unit) {
                     if (o.synced) emptyList() else items.mapNotNull { it.localImagePath })
             }, modifier = Modifier.fillMaxWidth()) { Text("إعادة إرسال الطلب على واتساب") }
         }
+        if (celebrate) {
+            ConfirmedCelebration(OrderCountdown.MIN_DAYS, o.countdownDays) { scope.launch { c.settings.markCelebrated(o.id) } }
+        }
     }
 }
 
@@ -223,8 +230,8 @@ private fun CountdownCard(o: OrderEntity, now: Long) {
                 o.status == "cancelled" -> Text("تم إلغاء الطلب", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.error)
                 o.status == "delivered" -> Text("تم توصيل طلبك 🎉", style = MaterialTheme.typography.titleLarge, color = Success)
                 confirmed == null -> {
-                    Text("بانتظار تأكيد الطلب", style = MaterialTheme.typography.titleLarge)
-                    Text("العد التنازلي ${o.countdownDays} يوم هيبدأ أول ما نأكد طلبك", textAlign = TextAlign.Center,
+                    Text("طلبك وصلنا ✓", style = MaterialTheme.typography.titleLarge)
+                    Text("بنراجع طلبك ونطلبه من SHEIN، وأول ما نأكده هيبدأ العد (${OrderCountdown.MIN_DAYS}–${o.countdownDays} يوم)", textAlign = TextAlign.Center,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 else -> {
@@ -238,9 +245,11 @@ private fun CountdownCard(o: OrderEntity, now: Long) {
                             Text(if (left in 3..10) "أيام" else "يوم", style = MaterialTheme.typography.titleMedium)
                         }
                     }
-                    Text(OrderCountdown.remainingText(left), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-                    Text("الوصول المتوقع: ${OrderCountdown.expectedDate(confirmed, o.countdownDays)}",
+                    Text(OrderCountdown.remainingRangeText(confirmed, now, OrderCountdown.MIN_DAYS, o.countdownDays),
+                        style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
+                    Text("الوصول المتوقع: بين ${OrderCountdown.expectedDate(confirmed, OrderCountdown.MIN_DAYS)} و ${OrderCountdown.expectedDate(confirmed, o.countdownDays)}",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ShipmentJourney(OrderCountdown.progress(left, o.countdownDays), Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
             }
         }

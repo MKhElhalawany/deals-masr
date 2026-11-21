@@ -105,4 +105,29 @@ class ScrapersTest {
         assertEquals(45.0, items.items[0].originalPrice, 0.0)
         assertTrue(items.items[0].id.startsWith("talabat:"))
     }
+
+    @Test fun sheinRetailPriceIsHighestAcrossSizesAndIgnoresRecommendations() {
+        val html = """<html><head><meta property="og:title" content="og"></head><body><script>
+        var gbRawData = {"productIntroData":{"detail":{"goods_id":"12345678","goods_name":"SHEIN Satin Dress \u0026 Belt",
+          "goods_img":"//img.ltwebstatic.com/images3/a.jpg",
+          "retailPrice":{"amount":"89.00","amountWithSymbol":"89.00 ر.س"},"salePrice":{"amount":"45.00"},
+          "sku_list":[{"sku_code":"S","retailPrice":{"amount":"89.00","amountWithSymbol":"89.00 ر.س"},"salePrice":{"amount":"45.00"}},
+                      {"sku_code":"XL","retailPrice":{"amount":"99.00","amountWithSymbol":"99.00 ر.س"},"salePrice":{"amount":"55.00"}}],
+          "padding":"${"x".repeat(1600)}"}},
+          "recommend":[{"goods_id":"99999999","retailPrice":{"amount":"450.00"}}]};
+        </script></body></html>"""
+        val r = SheinPageParser.parse(html, "12345678", "https://sa.shein.com/product-p-12345678.html") as SheinPriceResult.Ok
+        assertEquals(99.0, r.product.retailSar, 0.0)
+        assertEquals("SHEIN Satin Dress & Belt", r.product.title)
+        assertEquals("https://img.ltwebstatic.com/images3/a.jpg", r.product.imageUrl)
+    }
+
+    @Test fun sheinRejectsEgyptianPrices() {
+        val html = """<script>{"goods_id":"555666","retailPrice":{"amount":"1200.00","amountWithSymbol":"EGP1,200.00"},"pad":"${"y".repeat(1600)}"}</script>"""
+        assertTrue(SheinPageParser.parse(html, "555666", "u") is SheinPriceResult.Failed)
+    }
+
+    @Test fun bagIds() {
+        assertEquals(listOf("111222", "333444"), SheinPageParser.goodsIdsOnPage("""<a href="/a-p-111222.html"></a>{"goods_id":"333444"}"""))
+    }
 }

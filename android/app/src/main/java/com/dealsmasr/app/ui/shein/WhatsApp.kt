@@ -8,6 +8,28 @@ import java.io.File
 import java.net.URLEncoder
 
 object WhatsApp {
+    /** Opens a chat with the shop number with the product link / photo, asking the team to price it. */
+    fun askTeam(ctx: Context, item: com.dealsmasr.app.data.local.CartItemEntity, number: String) {
+        val text = "عاوز أعرف سعر المنتج ده من SHEIN 🙏\n" + listOfNotNull(item.productUrl, item.title?.takeIf { item.inputType == "text" })
+            .joinToString("\n")
+        val img = item.localImagePath?.let { File(it) }?.takeIf { it.exists() }
+        val digits = number.filter(Char::isDigit)
+        val pkg = installed(ctx)
+        val intent = if (img != null && pkg != null) {
+            Intent(Intent.ACTION_SEND).apply {
+                type = "image/*"
+                putExtra(Intent.EXTRA_STREAM, FileProvider.getUriForFile(ctx, ctx.packageName + ".files", img))
+                putExtra(Intent.EXTRA_TEXT, text)
+                putExtra("jid", "$digits@s.whatsapp.net") // opens the shop chat directly
+                setPackage(pkg)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$digits?text=${URLEncoder.encode(text, "UTF-8")}"))
+        }
+        runCatching { ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
     private val packages = listOf("com.whatsapp", "com.whatsapp.w4b")
 
     private fun installed(ctx: Context): String? = packages.firstOrNull {
@@ -29,6 +51,7 @@ object WhatsApp {
                     putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
                     putExtra(Intent.EXTRA_TEXT, text)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    if (shopNumber.isNotBlank()) putExtra("jid", "${shopNumber.filter(Char::isDigit)}@s.whatsapp.net")
                     pkg?.let { setPackage(it) }
                 }
             }

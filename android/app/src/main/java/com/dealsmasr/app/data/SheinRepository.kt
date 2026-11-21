@@ -22,7 +22,14 @@ import com.dealsmasr.app.data.remote.OrderIn
 import com.dealsmasr.app.data.remote.OrderItemIn
 import com.dealsmasr.app.data.remote.QuoteDto
 import com.dealsmasr.app.data.remote.ResolveIn
+import com.dealsmasr.app.scrape.SheinPriceResult
+import com.dealsmasr.app.scrape.SheinPricer
+import com.dealsmasr.app.scrape.SheinProduct
+import com.dealsmasr.app.scrape.WebFetcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -71,6 +78,71 @@ class SheinRepository(
     fun order(id: String): Flow<OrderEntity?> = orderDao.observe(id)
 
     private val json get() = apiProvider.json
+    private val pricer = SheinPricer(WebFetcher(context))
+    private val bg = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+    /** Raw HTML of the last SHEIN page read (admin diagnostics). */
+    fun diagnosticFile(): File? = pricer.lastHtml?.let { html ->
+        File(File(context.cacheDir, "diag").apply { mkdirs() }, "shein-page.txt").apply { writeText(html) }
+    }
+
+    private fun applyProduct(item: CartItemEntity, p: SheinProduct) = item.copy(
+        quoteStatus = "quoted", title = p.title, imageUrl = p.imageUrl ?: item.imageUrl, saUrl = p.url,
+        productUrl = item.productUrl ?: p.url, priceSar = p.retailSar, priceSource = "auto", adminNote = null,
+    )
+
+    /** Serverless: open the link on SHEIN Saudi in the background and price it automatically. */
+    private suspend fun autoPriceUrl(url: String): AddResult {
+        val id = cartDao.insert(CartItemEntity(inputType = "url", inputValue = url, productUrl = url,
+            quoteStatus = "pricing", addedAt = now()))
+        bg.launch {
+            val item = cartDao.all().firstOrNull { it.id == id } ?: return@launch
+            val goodsId = runCatching { pricer.goodsIdOf(url) }.getOrNull()
+            val r = goodsId?.let { runCatching { pricer.price(it) }.getOrNull() }
+            val cur = cartDao.all().firstOrNull { it.id == id } ?: return@launch
+            cartDao.update(
+                when (r) {
+                    is SheinPriceResult.Ok -> applyProduct(cur, r.product)
+                    is SheinPriceResult.Failed -> cur.copy(quoteStatus = "auto_failed", adminNote = r.reason)
+                    null -> cur.copy(quoteStatus = "auto_failed", adminNote = if (goodsId == null) "مش لاقيين رقم المنتج في اللينك" else "تعذر فتح الصفحة")
+                }
+            )
+        }
+        return AddResult.Added
+    }
+
+    /** Serverless: open a shared bag link, price every product on it. */
+    suspend fun addBag(link: String): AddResult {
+        val url = SheinLink.firstUrl(link) ?: return AddResult.Error("الصق لينك الباج")
+        val placeholder = cartDao.insert(CartItemEntity(inputType = "bag", inputValue = url, title = "باج SHEIN — جاري قراءة المنتجات…",
+            quoteStatus = "pricing", addedAt = now()))
+        bg.launch {
+            val (ok, failed) = runCatching { pricer.bag(url) }.getOrDefault(emptyList<SheinProduct>() to emptyList())
+            cartDao.delete(placeholder)
+            ok.forEach { p ->
+                cartDao.insert(applyProduct(CartItemEntity(inputType = "bag", inputValue = url, addedAt = now()), p))
+            }
+            if (ok.isEmpty()) cartDao.insert(CartItemEntity(inputType = "bag", inputValue = url, productUrl = url, title = "باج SHEIN",
+                quoteStatus = "auto_failed", adminNote = "مالقيناش منتجات في الباج", addedAt = now()))
+            failed.forEach { gid ->
+                cartDao.insert(CartItemEntity(inputType = "url", inputValue = "https://sa.shein.com/product-p-$gid.html",
+                    productUrl = "https://sa.shein.com/product-p-$gid.html", quoteStatus = "auto_failed",
+                    adminNote = "تعذر قراءة سعر المنتج ده", addedAt = now()))
+            }
+        }
+        return AddResult.Added
+    }
+
+    /** Retry automatic pricing for an item that failed. */
+    fun retry(item: CartItemEntity) {
+        bg.launch {
+            cartDao.update(item.copy(quoteStatus = "pricing", adminNote = null))
+            val goodsId = runCatching { pricer.goodsIdOf(item.productUrl ?: item.inputValue) }.getOrNull()
+            val r = goodsId?.let { runCatching { pricer.price(it) }.getOrNull() }
+            cartDao.update(if (r is SheinPriceResult.Ok) applyProduct(item, r.product)
+                else item.copy(quoteStatus = "auto_failed", adminNote = (r as? SheinPriceResult.Failed)?.reason ?: "تعذر فتح الصفحة"))
+        }
+    }
 
     private fun now() = System.currentTimeMillis()
 
@@ -102,8 +174,8 @@ class SheinRepository(
         )
         val s = settings.current()
         if (!s.hasServer) {
-            if (manualPriceSar == null) return AddResult.Error("أدخل سعر المنتج على SHEIN السعودية")
-            cartDao.insert(base); return AddResult.AddedPriced
+            if (manualPriceSar != null) { cartDao.insert(base); return AddResult.AddedPriced }
+            return autoPriceUrl(url)
         }
         return runCatching {
             val api = apiProvider.get(s.serverUrl)
@@ -123,7 +195,7 @@ class SheinRepository(
             priceSar = manualPriceSar, priceSource = manualPriceSar?.let { "manual" })
         val s = settings.current()
         if (!s.hasServer) {
-            if (manualPriceSar == null) return AddResult.Error("أدخل سعر المنتج على SHEIN السعودية")
+            if (manualPriceSar == null) { cartDao.insert(base.copy(quoteStatus = "team")); return AddResult.Added }
             cartDao.insert(base); return AddResult.AddedPriced
         }
         return runCatching {
@@ -138,7 +210,7 @@ class SheinRepository(
             addedAt = now(), priceSar = manualPriceSar, priceSource = manualPriceSar?.let { "manual" })
         val s = settings.current()
         if (!s.hasServer) {
-            if (manualPriceSar == null) return AddResult.Error("أدخل سعر المنتج على SHEIN السعودية")
+            if (manualPriceSar == null) { cartDao.insert(base.copy(quoteStatus = "team")); return AddResult.Added }
             cartDao.insert(base); return AddResult.AddedPriced
         }
         return runCatching {
@@ -199,7 +271,7 @@ class SheinRepository(
     }
 
     /** Creates the order locally, submits it to the backend if configured, clears the cart. */
-    suspend fun submitOrder(name: String, phone: String, address: String): OrderEntity {
+    suspend fun submitOrder(name: String, phone: String, address: String, notes: String = ""): OrderEntity {
         val s = settings.current()
         val items = cartDao.all()
         require(items.isNotEmpty()) { "السلة فاضية" }
@@ -214,7 +286,7 @@ class SheinRepository(
         val summary = OrderSummary.whatsappText(SummaryOrder(id, name, phone, address.ifBlank { null },
             items.zip(b.lines).map { (i, l) ->
                 SummaryItem(i.displayTitle(), i.productUrl ?: i.saUrl, i.imageUrl, i.size, i.color, i.notes, i.quantity, l)
-            }, b, createdAt))
+            }, b, createdAt, notes.ifBlank { null }))
         var order = OrderEntity(
             id = id, customerName = name, customerPhone = phone, address = address.ifBlank { null },
             itemsJson = json.encodeToString(ListSerializer(OrderItemSnapshot.serializer()), snaps),
@@ -230,6 +302,7 @@ class SheinRepository(
             countdownDays = s.countdownDays,
             synced = false,
             whatsappText = summary,
+            notes = notes.ifBlank { null },
         )
         orderDao.upsert(order)
         settings.saveCustomer(name, phone, address)

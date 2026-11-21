@@ -112,7 +112,11 @@ class SheinViewModel(private val repo: SheinRepository, settings: SettingsStore)
 
     fun add(mode: Int, text: String, manualPrice: Double?, onDone: () -> Unit) = viewModelScope.launch {
         adding = true
-        val r = if (mode == 0) repo.addByUrl(text, manualPrice) else repo.addByText(text, manualPrice)
+        val r = when (mode) {
+            0 -> repo.addByUrl(text, manualPrice)
+            1 -> repo.addBag(text)
+            else -> repo.addByText(text, manualPrice)
+        }
         adding = false
         report(r, onDone)
     }
@@ -127,7 +131,7 @@ class SheinViewModel(private val repo: SheinRepository, settings: SettingsStore)
     private fun report(r: AddResult, onDone: () -> Unit) {
         when (r) {
             AddResult.AddedPriced -> { messages.tryEmit("تمت الإضافة للسلة ✓"); onDone() }
-            AddResult.Added -> { messages.tryEmit("تمت الإضافة — جاري مطابقة المنتج وتسعيره من SHEIN السعودية"); onDone() }
+            AddResult.Added -> { messages.tryEmit("تمت الإضافة — بنجيب السعر من SHEIN السعودية…"); onDone() }
             is AddResult.Error -> messages.tryEmit(r.message)
         }
     }
@@ -143,6 +147,7 @@ class SheinViewModel(private val repo: SheinRepository, settings: SettingsStore)
         runCatching { repo.choose(item, index) }.onFailure { messages.tryEmit(it.userMessage()) }
     }
     fun breakdown(items: List<CartItemEntity>, cfg: SheinPricingConfig) = repo.breakdown(items, cfg)
+    fun retry(item: CartItemEntity) = repo.retry(item)
 }
 
 const val SHEIN_SLOGAN = "منتجات SHEIN بدون جمارك – والتوصيل لحد باب البيت"
@@ -156,7 +161,8 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
     val clipboard = LocalClipboardManager.current
     val ctx = LocalContext.current
 
-    var mode by remember { mutableStateOf(0) } // 0 link, 1 image, 2 name
+    var mode by remember { mutableStateOf(0) } // 0 link, 1 bag, 2 image, 3 name
+    val admin = s.settings?.adminMode == true
     var input by remember { mutableStateOf("") }
     var price by remember { mutableStateOf("") }
     var pickedImage by remember { mutableStateOf<Uri?>(null) }
@@ -179,7 +185,7 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("أضف منتج من SHEIN", style = MaterialTheme.typography.titleMedium)
-                        val labels = listOf("رابط", "صورة", "اسم المنتج")
+                        val labels = listOf("لينك منتج", "باج كاملة", "صورة", "اسم")
                         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                             labels.forEachIndexed { i, l ->
                                 SegmentedButton(selected = mode == i, onClick = { mode = i },
@@ -187,12 +193,17 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
                             }
                         }
                         when (mode) {
-                            0 -> OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
-                                placeholder = { Text("الصق رابط المنتج من تطبيق أو موقع SHEIN") }, singleLine = true,
+                            0, 1 -> OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
+                                placeholder = { Text(if (mode == 0) "الصق لينك المنتج من تطبيق أو موقع SHEIN" else "الصق لينك مشاركة الباج من SHEIN") },
+                                singleLine = true,
+                                supportingText = {
+                                    Text(if (mode == 0) "هنفتح المنتج على SHEIN السعودية ونحسب السعر على أعلى مقاس"
+                                    else "هنقرا كل منتجات الباج ونسعّر كل واحد على أعلى سعر")
+                                },
                                 trailingIcon = {
                                     IconButton(onClick = { clipboard.getText()?.text?.let { input = it } }) { Icon(Icons.Outlined.ContentPaste, "لصق") }
                                 })
-                            1 -> Surface(onClick = {
+                            2 -> Surface(onClick = {
                                 picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                             }, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier.fillMaxWidth().height(140.dp)) {
@@ -207,17 +218,21 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
                             else -> OutlinedTextField(input, { input = it }, Modifier.fillMaxWidth(),
                                 placeholder = { Text("اكتب اسم المنتج أو كلمات تصفه") })
                         }
-                        OutlinedTextField(price, { v -> price = v.filter { it.isDigit() || it == '.' } }, Modifier.fillMaxWidth(),
-                            label = { Text("سعر SHEIN السعودية قبل الخصم (اختياري)") }, suffix = { Text("ر.س") }, singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            supportingText = { Text("لو سبته فاضي فريقنا هيطابق المنتج ويسعّره لك") })
+                        if (mode >= 2) Text("المنتجات اللي بالصورة أو بالاسم فريقنا بيدوّر عليها ويبعتلك سعرها على واتساب.",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (admin && mode != 1) OutlinedTextField(price, { v -> price = v.filter { it.isDigit() || it == '.' } }, Modifier.fillMaxWidth(),
+                            label = { Text("أدمن: سعر SHEIN السعودية الأصلي (اختياري)") }, suffix = { Text("ر.س") }, singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
                         Button(
                             onClick = {
                                 val p = price.toDoubleOrNull()?.takeIf { it > 0 }
-                                if (mode == 1) pickedImage?.let { vm.addImage(it, p, reset) }
-                                else vm.add(mode, input, p, reset)
+                                when (mode) {
+                                    2 -> pickedImage?.let { vm.addImage(it, p, reset) }
+                                    3 -> vm.add(3, input, p, reset)
+                                    else -> vm.add(mode, input, p, reset)
+                                }
                             },
-                            enabled = !vm.adding && (if (mode == 1) pickedImage != null else input.isNotBlank()),
+                            enabled = !vm.adding && (if (mode == 2) pickedImage != null else input.isNotBlank()),
                             modifier = Modifier.fillMaxWidth().height(50.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = SheinBlack, contentColor = Color.White),
                         ) { Text(if (vm.adding) "جاري الإضافة…" else "أضف للسلة") }
@@ -227,7 +242,7 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
             item {
                 Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("سلة SHEIN (${s.cart.size})", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                    if (s.cart.any { it.quoteStatus == "pending" || it.quoteStatus == "needs_choice" }) {
+                    if (s.cart.any { it.quoteStatus == "pending" || it.quoteStatus == "needs_choice" } && s.settings?.hasServer == true) {
                         TextButton(onClick = { vm.refreshQuotes(silent = false) }) { Icon(Icons.Outlined.Refresh, null); Text(" تحديث") }
                     }
                 }
@@ -241,7 +256,8 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
                 }
             }
             items(s.cart, key = { it.id }) { item ->
-                CartItemCard(item, cfg, vm, onOpen = { url -> openUrl(ctx, url) })
+                CartItemCard(item, cfg, vm, admin, onOpen = { url -> openUrl(ctx, url) },
+                    onTeam = { WhatsApp.askTeam(ctx, item, s.settings?.whatsappNumber ?: com.dealsmasr.app.data.OWNER_WHATSAPP) })
             }
             if (s.cart.isNotEmpty()) {
                 item {
@@ -250,11 +266,11 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text("ملخص الطلب", style = MaterialTheme.typography.titleMedium)
                             if (breakdown == null) {
-                                Text("بعض المنتجات لسه بتتسعّر. هتقدر تكمل الطلب أول ما كل الأسعار تبقى جاهزة.",
+                                Text("بعض المنتجات لسه بتتسعّر أو محتاجة فريقنا. هتقدر تكمل الطلب أول ما كل الأسعار تبقى جاهزة (أو امسح المنتج اللي مش متسعّر).",
                                     color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                             } else {
                                 BreakdownRows(breakdown.sarTotal, breakdown.convertedEgp, breakdown.extraEgp, breakdown.subtotalEgp,
-                                    breakdown.deliveryFeeEgp, breakdown.totalEgp, cfg)
+                                    breakdown.deliveryFeeEgp, breakdown.totalEgp, cfg, detailed = admin)
                             }
                             Spacer(Modifier.height(6.dp))
                             Button(onClick = onCheckout, enabled = breakdown != null, modifier = Modifier.fillMaxWidth().height(52.dp)) {
@@ -299,13 +315,16 @@ private fun Trust(icon: ImageVector, label: String) {
 fun BreakdownRows(
     sar: BigDecimal, converted: BigDecimal, extra: BigDecimal, subtotal: BigDecimal, fee: BigDecimal, total: BigDecimal,
     cfg: SheinPricingConfig,
+    detailed: Boolean = false,
 ) {
-    val extraPct = cfg.multiplier.subtract(BigDecimal.ONE).multiply(BigDecimal(100)).stripTrailingZeros().toPlainString()
-    Line("سعر SHEIN الأصلي", Money.sar(sar))
-    Line("بعد التحويل (× ${cfg.sarToEgp.toPlainString()})", Money.egp(converted))
-    Line("إضافة $extraPct%", Money.egp(extra))
-    Line("إجمالي المنتجات", Money.egp(subtotal))
-    Line("التوصيل (مرة واحدة للطلب)", Money.egp(fee))
+    if (detailed) {
+        val extraPct = cfg.multiplier.subtract(BigDecimal.ONE).multiply(BigDecimal(100)).stripTrailingZeros().toPlainString()
+        Line("أدمن: سعر SHEIN الأصلي", Money.sar(sar))
+        Line("أدمن: بعد التحويل (× ${cfg.sarToEgp.toPlainString()})", Money.egp(converted))
+        Line("أدمن: إضافة $extraPct%", Money.egp(extra))
+    }
+    Line("سعر المنتجات", Money.egp(subtotal))
+    Line("التوصيل لحد باب البيت", Money.egp(fee))
     HorizontalDivider(Modifier.padding(vertical = 4.dp))
     Line("الإجمالي المطلوب", Money.egp(total), bold = true)
 }
@@ -322,6 +341,10 @@ private fun Line(label: String, value: String, bold: Boolean = false) {
 @Composable
 private fun StatusChip(item: CartItemEntity) {
     val (label, color) = when {
+        item.quoteStatus == "pricing" -> "⏳ بنجيب السعر من SHEIN السعودية…" to MaterialTheme.colorScheme.onSurfaceVariant
+        item.quoteStatus == "auto_failed" -> "تعذر التسعير التلقائي" to MaterialTheme.colorScheme.error
+        item.quoteStatus == "team" -> "فريقنا هيسعّره لك على واتساب" to Color(0xFF0277BD)
+        item.priceSource == "auto" -> "تم التسعير ✓" to Success
         item.quoteStatus == "not_found" -> "غير متوفر" to MaterialTheme.colorScheme.error
         item.quoteStatus == "needs_choice" -> "اختار المنتج المطابق" to Color(0xFFF57C00)
         item.priceSource == "quoted" -> "تم التسعير ✓" to Success
@@ -334,7 +357,10 @@ private fun StatusChip(item: CartItemEntity) {
 }
 
 @Composable
-private fun CartItemCard(item: CartItemEntity, cfg: SheinPricingConfig, vm: SheinViewModel, onOpen: (String) -> Unit) {
+private fun CartItemCard(
+    item: CartItemEntity, cfg: SheinPricingConfig, vm: SheinViewModel, admin: Boolean,
+    onOpen: (String) -> Unit, onTeam: () -> Unit,
+) {
     var size by remember(item.id) { mutableStateOf(item.size) }
     var color by remember(item.id) { mutableStateOf(item.color) }
     var notes by remember(item.id) { mutableStateOf(item.notes) }
@@ -343,7 +369,7 @@ private fun CartItemCard(item: CartItemEntity, cfg: SheinPricingConfig, vm: Shei
     // Persist from local field state so concurrent edits never overwrite each other with stale values.
     fun persist(quantity: Int = item.quantity) {
         val base = item.copy(size = size, color = color, notes = notes, quantity = quantity)
-        val updated = if (item.priceSource == "quoted") base else {
+        val updated = if (item.priceSource == "quoted" || item.priceSource == "auto" || !admin) base else {
             val p = manual.toDoubleOrNull()?.takeIf { it > 0 }
             base.copy(priceSar = p, priceSource = p?.let { "manual" })
         }
@@ -368,6 +394,13 @@ private fun CartItemCard(item: CartItemEntity, cfg: SheinPricingConfig, vm: Shei
                 IconButton(onClick = { vm.remove(item) }) { Icon(Icons.Outlined.Delete, "حذف") }
             }
             item.adminNote?.takeIf { it.isNotBlank() }?.let { Text("ملاحظة: $it", style = MaterialTheme.typography.bodySmall) }
+            if (item.quoteStatus == "pricing") androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+            if (item.quoteStatus == "auto_failed" || item.quoteStatus == "team") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (item.quoteStatus == "auto_failed") OutlinedButton(onClick = { vm.retry(item) }) { Text("حاول تاني") }
+                    Button(onClick = onTeam, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF25D366))) { Text("ابعته لفريقنا") }
+                }
+            }
             if (item.quoteStatus == "needs_choice") {
                 OutlinedButton(onClick = { choose = true }, modifier = Modifier.fillMaxWidth()) { Text("اختار المنتج المطابق") }
             }
@@ -379,7 +412,7 @@ private fun CartItemCard(item: CartItemEntity, cfg: SheinPricingConfig, vm: Shei
             }
             OutlinedTextField(notes, { notes = it; persist() }, Modifier.fillMaxWidth(),
                 label = { Text("ملاحظات") }, maxLines = 3)
-            if (item.priceSource != "quoted") {
+            if (admin && item.priceSource != "quoted" && item.priceSource != "auto") {
                 OutlinedTextField(manual, { v ->
                     manual = v.filter { it.isDigit() || it == '.' }
                     persist()
@@ -394,7 +427,7 @@ private fun CartItemCard(item: CartItemEntity, cfg: SheinPricingConfig, vm: Shei
             }
             if (item.isPriced()) {
                 val l = SheinPricing.line(BigDecimal.valueOf(item.priceSar!!), item.quantity, cfg)
-                Text("${Money.sar(l.sarUnit)} × ${l.quantity} → ${Money.egp(l.convertedEgp)} + ${Money.egp(l.extraEgp)} = ${Money.egp(l.lineTotalEgp)}",
+                if (admin) Text("أدمن: ${Money.sar(l.sarUnit)} × ${l.quantity} → ${Money.egp(l.convertedEgp)} + ${Money.egp(l.extraEgp)} = ${Money.egp(l.lineTotalEgp)}",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(Money.egp(l.lineTotalEgp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary)

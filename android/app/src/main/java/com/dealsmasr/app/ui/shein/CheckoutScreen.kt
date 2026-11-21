@@ -51,6 +51,7 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
     var name by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -72,6 +73,8 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
                 supportingText = { if (phone.isNotEmpty() && !phoneOk) Text("اكتب رقم موبايل مصري صحيح (01xxxxxxxxx)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
             OutlinedTextField(address, { address = it }, Modifier.fillMaxWidth(), label = { Text("العنوان بالتفصيل") }, minLines = 2)
+            OutlinedTextField(notes, { notes = it }, Modifier.fillMaxWidth(), label = { Text("ملاحظات على الطلب (اختياري)") },
+                placeholder = { Text("مثلاً: المقاس، اللون، ميعاد مناسب للتوصيل…") }, minLines = 2)
             Card(shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("${cart.size} منتج", style = MaterialTheme.typography.titleMedium)
@@ -79,14 +82,14 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
                     else Text("السلة غير جاهزة", color = MaterialTheme.colorScheme.error)
                 }
             }
-            Text("بعد الإرسال هيتفتح واتساب بملخص الطلب. مدة التوصيل المتوقعة ${settings?.countdownDays ?: 35} يوم من تأكيد الطلب.",
+            Text("بعد التأكيد هيتفتح واتساب برسالة الطلب لفريقنا — اضغط إرسال. التوصيل خلال 25–${settings?.countdownDays ?: 35} يوم من تأكيد الطلب.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
                 onClick = {
                     busy = true; error = null
                     scope.launch {
-                        runCatching { c.shein.submitOrder(name.trim(), phone.replace(" ", ""), address.trim()) }
+                        runCatching { c.shein.submitOrder(name.trim(), phone.replace(" ", ""), address.trim(), notes.trim()) }
                             .onSuccess { order ->
                                 val images = c.shein.itemsOf(order).mapNotNull { it.localImagePath }
                                 // Images already uploaded to the backend are visible to the admin; attach only local-mode images.
@@ -100,7 +103,7 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
                 },
                 enabled = !busy && b != null && name.isNotBlank() && phoneOk,
                 modifier = Modifier.fillMaxWidth().height(54.dp),
-            ) { Text(if (busy) "جاري الإرسال…" else "تأكيد وإرسال عبر واتساب") }
+            ) { Text(if (busy) "جاري الإرسال…" else "تأكيد الطلب") }
         }
     }
 }
