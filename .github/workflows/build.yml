@@ -18,6 +18,8 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     defaults: { run: { working-directory: android } }
     steps:
       - uses: actions/checkout@v4
@@ -33,3 +35,12 @@ jobs:
         with:
           name: deals-masr-debug-apk
           path: android/app/build/outputs/apk/debug/*.apk
+      - name: Publish APK as GitHub release (main branch only)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk DealsMasr.apk
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" DealsMasr.apk --title "Deals Masr debug build ${{ github.run_number }}" \
+            --notes "Debug APK built from ${{ github.sha }}" --latest
