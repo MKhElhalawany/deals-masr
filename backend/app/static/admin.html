@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>لوحة التحكم – عروض مصر</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b1f24;--muted:#6b7280;--accent:#e4572e;--ok:#15803d;--line:#e5e7eb}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:var(--ink);color:#fff;padding:12px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:18px;margin:0 0 0 auto}
+nav button{background:none;border:0;color:#cbd5e1;font-size:14px;padding:6px 10px;cursor:pointer;border-radius:6px}
+nav button.on{background:#374151;color:#fff}
+main{max-width:1100px;margin:20px auto;padding:0 16px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
+input,select,textarea{width:100%;padding:8px;border:1px solid var(--line);border-radius:6px;font:inherit}
+button.b{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font:inherit}
+button.g{background:#e5e7eb;color:var(--ink)}
+table{width:100%;border-collapse:collapse;font-size:13px}td,th{padding:8px;border-bottom:1px solid var(--line);text-align:right;vertical-align:top}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:12px;background:#eef2ff}
+.ok{color:var(--ok)}.err{color:#b91c1c}img.t{width:56px;height:56px;object-fit:cover;border-radius:6px}
+#msg{position:fixed;bottom:16px;left:16px;background:var(--ink);color:#fff;padding:10px 14px;border-radius:8px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>لوحة التحكم</h1>
+  <nav id="tabs"></nav>
+  <input id="token" type="password" placeholder="ADMIN_TOKEN" style="width:200px">
+</header>
+<main id="view"></main>
+<div id="msg"></div>
+<script>
+const $ = s => document.querySelector(s);
+const tokenEl = $('#token');
+tokenEl.value = sessionStorage.getItem('t') || '';
+tokenEl.onchange = () => { sessionStorage.setItem('t', tokenEl.value); show(cur); };
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = ts => ts ? new Date(ts*1000).toLocaleString('ar-EG') : '—';
+function toast(t){const m=$('#msg');m.textContent=t;m.style.display='block';setTimeout(()=>m.style.display='none',2500)}
+async function api(path, opts={}) {
+  const r = await fetch(path, {...opts, headers:{'Content-Type':'application/json','Authorization':'Bearer '+tokenEl.value, ...(opts.headers||{})}});
+  if (!r.ok) { const t = await r.text(); toast('خطأ: '+t); throw new Error(t); }
+  return r.json();
+}
+const TABS = {settings:'الإعدادات', markets:'المتاجر', quotes:'طلبات تسعير SHEIN', orders:'الطلبات', deals:'العروض', notif:'الإشعارات'};
+let cur = 'quotes';
+$('#tabs').innerHTML = Object.entries(TABS).map(([k,v])=>`<button data-k="${k}">${v}</button>`).join('');
+$('#tabs').onclick = e => { if (e.target.dataset.k) show(e.target.dataset.k); };
+
+async function show(k) {
+  cur = k;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+  if (!tokenEl.value) { $('#view').innerHTML = '<div class="card">أدخل رمز الإدارة (ADMIN_TOKEN) بالأعلى.</div>'; return; }
+  try { await VIEWS[k](); } catch (e) { $('#view').innerHTML = `<div class="card err">${esc(e.message)}</div>`; }
+}
+
+const VIEWS = {
+  async settings() {
+    const s = await api('/api/admin/settings');
+    const p = s.shein_pricing;
+    $('#view').innerHTML = `
+    <div class="card"><h3>معادلة تسعير SHEIN</h3>
+      <div class="row">
+        <div><label>معامل التحويل (ريال → جنيه)</label><input id="rate" value="${esc(p.sar_to_egp)}"></div>
+        <div><label>المضاعف (1.20 = +20%)</label><input id="mult" value="${esc(p.multiplier)}"></div>
+        <div><label>رسوم التوصيل لكل طلب (ج.م)</label><input id="fee" value="${esc(p.delivery_fee_egp)}"></div>
+      </div><br><button class="b" id="savePricing">حفظ</button>
+      <p style="color:var(--muted);font-size:13px">مثال: 100 ريال × ${esc(p.sar_to_egp)} × ${esc(p.multiplier)} + ${esc(p.delivery_fee_egp)} = <b>${(100*p.sar_to_egp*p.multiplier + +p.delivery_fee_egp).toFixed(2)}</b> ج.م</p>
+    </div>
+    <div class="card"><h3>العروض والتحديث</h3>
+      <div class="row">
+        <div><label>أقل نسبة خصم مقبولة %</label><input id="minD" type="number" value="${s.min_discount_pct}"></div>
+        <div><label>التحديث كل (دقيقة)</label><input id="refresh" type="number" value="${s.refresh_minutes}"></div>
+        <div><label>إشعار عند خصم ≥ %</label><input id="major" type="number" value="${s.major_deal_pct}"></div>
+        <div><label>انتهاء العرض بعد (ساعة بدون تحقق)</label><input id="exp" type="number" value="${s.expire_after_hours}"></div>
+        <div><label>أيام العد التنازلي للطلب</label><input id="days" type="number" value="${s.order_countdown_days}"></div>
+        <div><label>رقم واتساب لاستقبال الطلبات</label><input id="wa" value="${esc(s.whatsapp_number)}" placeholder="2010xxxxxxxx"></div>
+      </div>
+      <label>تصنيفات الخصم (JSON)</label><textarea id="tiers" rows="6" dir="ltr">${esc(JSON.stringify(s.tiers,null,1))}</textarea>
+      <label>كلمات بحث عروض أمازون (سطر لكل كلمة)</label><textarea id="kw" rows="4" dir="ltr">${esc(s.amazon_deal_keywords.join('\n'))}</textarea>
+      <br><button class="b" id="saveGen">حفظ</button>
+    </div>`;
+    $('#savePricing').onclick = async () => { await api('/api/admin/settings/shein_pricing',{method:'PUT',body:JSON.stringify({value:{sar_to_egp:$('#rate').value,multiplier:$('#mult').value,delivery_fee_egp:$('#fee').value}})}); toast('تم الحفظ'); show('settings'); };
+    $('#saveGen').onclick = async () => {
+      const put = (k,v) => api('/api/admin/settings/'+k,{method:'PUT',body:JSON.stringify({value:v})});
+      await put('min_discount_pct', +$('#minD').value); await put('refresh_minutes', +$('#refresh').value);
+      await put('major_deal_pct', +$('#major').value); await put('expire_after_hours', +$('#exp').value);
+      await put('order_countdown_days', +$('#days').value); await put('whatsapp_number', $('#wa').value.trim());
+      await put('tiers', JSON.parse($('#tiers').value));
+      await put('amazon_deal_keywords', $('#kw').value.split('\n').map(x=>x.trim()).filter(Boolean));
+      toast('تم الحفظ');
+    };
+  },
+  async markets() {
+    const m = await api('/api/admin/marketplaces');
+    $('#view').innerHTML = `<div class="card"><button class="b" id="run">تحديث العروض الآن</button> <button class="b g" id="purge">حذف العروض المنتهية</button>
+      <table><tr><th>المتجر</th><th>مفعل</th><th>الحالة</th><th>آخر تشغيل</th><th>عدد العروض</th></tr>
+      ${m.map(x=>`<tr><td>${esc(x.name_ar)}</td><td><input type="checkbox" data-id="${x.id}" ${x.enabled?'checked':''}></td>
+      <td class="${x.configured?'ok':'err'}">${esc(x.status)}<br><small>${esc(x.last_status||'')}</small></td><td>${fmt(x.last_run_at)}</td><td>${x.last_count??'—'}</td></tr>`).join('')}
+      </table><pre id="out" dir="ltr"></pre></div>`;
+    document.querySelectorAll('input[data-id]').forEach(cb => cb.onchange = () => api('/api/admin/marketplaces/'+cb.dataset.id,{method:'PUT',body:JSON.stringify({enabled:cb.checked})}).then(()=>toast('تم')));
+    $('#run').onclick = async () => { $('#out').textContent='...'; $('#out').textContent = JSON.stringify(await api('/api/admin/refresh',{method:'POST'}),null,1); };
+    $('#purge').onclick = async () => toast('تم حذف '+(await api('/api/admin/deals/purge-expired',{method:'POST'})).deleted);
+  },
+  async quotes() {
+    const st = sessionStorage.getItem('qs') || 'pending';
+    const q = await api('/api/admin/quotes?status='+st);
+    $('#view').innerHTML = `<div class="card"><select id="qs">${['pending','needs_choice','quoted','not_found'].map(s=>`<option ${s===st?'selected':''}>${s}</option>`).join('')}</select></div>` +
+    (q.length ? '' : '<div class="card">لا توجد طلبات.</div>') +
+    q.map(x => `<div class="card" data-q="${x.id}">
+      <div><span class="pill">${esc(x.input_type)}</span> ${fmt(x.created_at)} — <b>${esc(x.input_value)}</b></div>
+      ${x.has_image?`<p><img class="t" style="width:140px;height:140px" src="" data-img="${x.id}"></p>`:''}
+      ${x.sa_url?`<p>رابط SHEIN السعودية: <a target="_blank" rel="noopener" href="${esc(x.sa_url)}">${esc(x.sa_url)}</a> (تأكد أنه نفس المنتج)</p>`:''}
+      <div class="row">
+        <div><label>اسم المنتج</label><input name="title" value="${esc(x.title)}"></div>
+        <div><label>السعر الأصلي قبل الخصم (ريال)</label><input name="price" type="number" step="0.01" value="${x.original_price_sar??''}"></div>
+        <div><label>رابط المنتج (السعودية)</label><input name="url" value="${esc(x.product_url||x.sa_url)}"></div>
+        <div><label>رابط الصورة</label><input name="img" value="${esc(x.image_url)}"></div>
+      </div>
+      <label>بدائل محتملة (JSON: [{"title","original_price_sar","product_url","image_url"}])</label>
+      <textarea name="cands" rows="2" dir="ltr">${x.candidates.length?esc(JSON.stringify(x.candidates)):''}</textarea>
+      <label>ملاحظة للعميل</label><input name="note" value="${esc(x.admin_note)}"><br><br>
+      <button class="b" data-act="quoted">اعتماد السعر</button> <button class="b g" data-act="needs_choice">إرسال بدائل</button> <button class="b g" data-act="not_found">غير متوفر</button>
+    </div>`).join('');
+    $('#qs').onchange = e => { sessionStorage.setItem('qs', e.target.value); show('quotes'); };
+    document.querySelectorAll('img[data-img]').forEach(async img => {
+      const r = await fetch('/api/admin/quotes/'+img.dataset.img+'/image',{headers:{Authorization:'Bearer '+tokenEl.value}});
+      if (r.ok) img.src = URL.createObjectURL(await r.blob());
+    });
+    document.querySelectorAll('[data-act]').forEach(b => b.onclick = async () => {
+      const c = b.closest('[data-q]'); const v = n => c.querySelector(`[name=${n}]`).value.trim();
+      const body = {status:b.dataset.act, title:v('title')||null, original_price_sar: v('price')? +v('price'):null,
+        product_url:v('url')||null, image_url:v('img')||null, admin_note:v('note')||null,
+        candidates: v('cands') ? JSON.parse(v('cands')) : null};
+      await api('/api/admin/quotes/'+c.dataset.q,{method:'PUT',body:JSON.stringify(body)}); toast('تم'); show('quotes');
+    });
+  },
+  async orders() {
+    const o = await api('/api/admin/orders');
+    const S = ['submitted','confirmed','purchased','shipped','delivered','cancelled'];
+    $('#view').innerHTML = (o.length?'':'<div class="card">لا توجد طلبات.</div>') + o.map(x => `<div class="card">
+      <b>#${esc(x.id)}</b> — ${esc(x.customer_name)} — <a href="tel:${esc(x.customer_phone)}">${esc(x.customer_phone)}</a> — ${fmt(x.created_at)}
+      <div>${esc(x.address||'')}</div>
+      <table><tr><th>المنتج</th><th>المقاس</th><th>اللون</th><th>الكمية</th><th>ريال</th><th>ج.م</th></tr>
+      ${x.items.map(i=>`<tr><td>${i.product_url?`<a target="_blank" rel="noopener" href="${esc(i.product_url)}">${esc(i.title)}</a>`:esc(i.title)}<br><small>${esc(i.notes||'')}</small></td><td>${esc(i.size||'')}</td><td>${esc(i.color||'')}</td><td>${i.quantity}</td><td>${i.original_price_sar}</td><td>${i.line_total_egp}</td></tr>`).join('')}
+      </table>
+      <p>المجموع ${x.subtotal_egp} + توصيل ${x.delivery_fee_egp} = <b>${x.total_egp} ج.م</b> · تم التأكيد: ${fmt(x.confirmed_at)}</p>
+      <select data-o="${x.id}">${S.map(s=>`<option ${s===x.status?'selected':''}>${s}</option>`).join('')}</select>
+    </div>`).join('');
+    document.querySelectorAll('select[data-o]').forEach(s => s.onchange = () => api('/api/admin/orders/'+s.dataset.o,{method:'PUT',body:JSON.stringify({status:s.value})}).then(()=>toast('تم')));
+  },
+  async deals() {
+    const d = await api('/api/admin/deals');
+    $('#view').innerHTML = `<div class="card"><table><tr><th></th><th>المنتج</th><th>المتجر</th><th>السعر</th><th>الخصم</th><th>آخر تحقق</th><th></th></tr>
+    ${d.map(x=>`<tr><td><img class="t" src="${esc(x.image_url)}"></td><td><a target="_blank" rel="noopener" href="${esc(x.url)}">${esc(x.title)}</a></td><td>${esc(x.marketplace_name)}</td>
+    <td><s>${x.original_price}</s> ${x.current_price}</td><td>${x.discount_pct}%</td><td>${fmt(x.last_checked)}</td><td><button class="b g" data-del="${esc(x.id)}">حذف</button></td></tr>`).join('')}
+    </table></div>`;
+    document.querySelectorAll('[data-del]').forEach(b => b.onclick = () => api('/api/admin/deals/'+encodeURIComponent(b.dataset.del),{method:'DELETE'}).then(()=>show('deals')));
+  },
+  async notif() {
+    const n = await api('/api/admin/notifications');
+    $('#view').innerHTML = `<div class="card"><p style="color:var(--muted)">التطبيق يستلم هذه الإشعارات تلقائياً عند التحديث الدوري. (FCM اختياري — راجع docs/INTEGRATIONS.md)</p><table>
+    ${n.map(x=>`<tr><td>${fmt(x.created_at)}</td><td>${esc(x.title)}</td><td>${esc(x.body)}</td><td><button class="b g" data-n="${x.id}">حذف</button></td></tr>`).join('')}</table></div>`;
+    document.querySelectorAll('[data-n]').forEach(b => b.onclick = () => api('/api/admin/notifications/'+b.dataset.n,{method:'DELETE'}).then(()=>show('notif')));
+  },
+};
+show(cur);
+</script>
+</body>
+</html>
