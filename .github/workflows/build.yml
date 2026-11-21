@@ -5,6 +5,11 @@ on:
   pull_request:
   workflow_dispatch:
 
+# never provision twice in parallel
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -27,7 +32,26 @@ jobs:
           for f in supabase/migrations/*.sql; do sudo -u postgres psql -v ON_ERROR_STOP=1 -f "$f"; done
           sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/rls_test.sql
 
+  # Creates/updates the Supabase project, applies migrations, runs live security tests, outputs URL + publishable key.
+  # Only needs the SUPABASE_ACCESS_TOKEN repository secret (optional ADMIN_EMAIL). Secret keys never leave Supabase.
+  supabase:
+    needs: supabase-sql
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      url: ${{ steps.setup.outputs.url }}
+      key: ${{ steps.setup.outputs.key }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: setup
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+        run: python3 tools/supabase_setup.py
+
   android:
+    needs: supabase
+    if: always() && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -42,8 +66,8 @@ jobs:
         run: ./gradlew --no-daemon testDebugUnitTest
       - name: Build debug APK
         env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ needs.supabase.outputs.key || vars.SUPABASE_ANON_KEY }}
         run: ./gradlew --no-daemon assembleDebug -PapiBaseUrl="${{ vars.API_BASE_URL }}"
       - uses: actions/upload-artifact@v4
         with:
@@ -53,8 +77,15 @@ jobs:
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
+          CONNECTED: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk DealsMasr.apk
           TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" DealsMasr.apk --title "Deals Masr debug build ${{ github.run_number }}" \
-            --notes "Debug APK built from ${{ github.sha }}" --latest
+          if [ -n "$CONNECTED" ]; then
+            gh release create "$TAG" DealsMasr.apk --title "Deals Masr build ${{ github.run_number }}" \
+              --notes "Debug APK connected to Supabase, built from ${{ github.sha }}" --latest
+          else
+            # not connected to Supabase: publish as pre-release so "latest" keeps pointing at a working APK
+            gh release create "$TAG" DealsMasr.apk --title "Deals Masr build ${{ github.run_number }} (no backend)" \
+              --notes "Built without Supabase (SUPABASE_ACCESS_TOKEN secret missing)." --prerelease --latest=false
+          fi
