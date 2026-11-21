@@ -116,7 +116,7 @@ class DealsRepository(
             val fresh = res.items.filter { it.id !in seen && it.discountPct >= a.minDiscount }
             if (fresh.isNotEmpty()) {
                 out += a to fresh
-                alertDao.update(a.copy(notifiedIds = (seen + fresh.map { it.id }).takeLast(300).joinToString(",")))
+                alertDao.update(a.copy(notifiedIds = (seen + fresh.map { it.id }).toList().takeLast(300).joinToString(",")))
             }
         }
         return out
