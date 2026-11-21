@@ -1,5 +1,4 @@
 import re, urllib.request, gzip, collections, subprocess, sys
-subprocess.run([sys.executable, "-m", "pip", "install", "-q", "beautifulsoup4"], check=True)
 from bs4 import BeautifulSoup
 UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
 def get(url):
