@@ -52,7 +52,6 @@ import com.dealsmasr.app.data.remote.DealDto
 import com.dealsmasr.app.ui.appViewModel
 import com.dealsmasr.app.ui.components.ErrorState
 import com.dealsmasr.app.ui.components.MessageState
-import com.dealsmasr.app.ui.components.NoServerState
 import com.dealsmasr.app.ui.components.ProductCard
 import com.dealsmasr.app.ui.components.SectionHeader
 import com.dealsmasr.app.ui.components.SkeletonCard
@@ -91,7 +90,7 @@ class DealsViewModel(private val repo: DealsRepository, private val settings: Se
 
     fun refreshIfStale() = viewModelScope.launch {
         val s = settings.current()
-        if (s.hasServer && System.currentTimeMillis() - s.lastRefresh > 30 * 60_000) refresh()
+        if (System.currentTimeMillis() - s.lastRefresh > 10 * 60_000) refresh()
     }
 
     fun refresh() = viewModelScope.launch {
@@ -129,7 +128,6 @@ fun HomeScreen(
             LazyColumn(contentPadding = PaddingValues(bottom = 24.dp)) {
                 item { SearchEntry(onSearch) }
                 when {
-                    !s.hasServer -> item { NoServerState(onSettings) }
                     s.deals.isEmpty() && s.error != null -> item { ErrorState(s.error!!, { vm.refresh() }) }
                     s.deals.isEmpty() && !s.loaded -> item {
                         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -138,7 +136,8 @@ fun HomeScreen(
                     }
                     s.deals.isEmpty() -> item {
                         MessageState(Icons.Outlined.LocalOffer, "لا توجد عروض موثقة حالياً",
-                            "بنعرض فقط العروض اللي اتأكدنا من سعرها من مصادر رسمية. اسحب للتحديث بعد شوية.")
+                            "بنقرا العروض من أمازون وجوميا كل 10 دقايق. اسحب للتحديث أو شوف حالة القراءة في الإعدادات.",
+                            "حالة القراءة", onSettings)
                     }
                     else -> {
                         item {

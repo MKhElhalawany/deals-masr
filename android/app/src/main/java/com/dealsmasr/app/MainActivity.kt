@@ -14,7 +14,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.dealsmasr.app.data.ThemeMode
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.dealsmasr.app.ui.AppNav
 import com.dealsmasr.app.ui.ExternalNav
 import com.dealsmasr.app.ui.theme.DealsTheme
@@ -29,6 +34,15 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) handleIntent(intent)
         val container = (application as DealsApp).container
+        // While the app is visible: refresh deals every 10 minutes.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    runCatching { container.deals.refreshIfDue(10 * 60_000L) }
+                    delay(60_000)
+                }
+            }
+        }
         setContent {
             val settings by container.settings.settings.collectAsStateWithLifecycle(null)
             val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}

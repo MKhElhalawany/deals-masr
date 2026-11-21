@@ -61,6 +61,9 @@ fun SettingsScreen(onBack: () -> Unit) {
     var url by remember { mutableStateOf<String?>(null) }
     var markets by remember { mutableStateOf<List<MarketplaceDto>?>(null) }
     var testMsg by remember { mutableStateOf<String?>(null) }
+    var keywords by remember { mutableStateOf<String?>(null) }
+    var refreshing by remember { mutableStateOf(false) }
+    var refreshMsg by remember { mutableStateOf<String?>(null) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         scope.launch { c.settings.setNotifications(granted) }
     }
@@ -81,7 +84,35 @@ fun SettingsScreen(onBack: () -> Unit) {
     }) { pad ->
         val st = s ?: return@Scaffold
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Section("خادم العروض") {
+            if (!st.hasServer) Section("القراءة المباشرة من المواقع") {
+                Text("التطبيق بيقرا صفحات العروض من المواقع كل 10 دقايق وهو مفتوح، وكل 15 دقيقة في الخلفية.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                listOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر").forEach { (id, name) ->
+                    Toggle(name, id in st.scrapeStores) { on ->
+                        scope.launch { c.settings.setScrapeStores(if (on) st.scrapeStores + id else st.scrapeStores - id) }
+                    }
+                    Text(st.scrapeStatus[id] ?: "لسه ماتقراش", style = MaterialTheme.typography.labelMedium,
+                        color = if ((st.scrapeStatus[id] ?: "").startsWith("✓")) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Text("نون: غير مدعوم حالياً (صفحاته بتتحمّل بالجافاسكريبت).", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(keywords ?: st.scrapeKeywords.joinToString("\n"), { keywords = it }, Modifier.fillMaxWidth(),
+                    label = { Text("كلمات البحث عن العروض (كلمة في كل سطر)") }, minLines = 4, maxLines = 8)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(enabled = !refreshing, onClick = {
+                        scope.launch {
+                            keywords?.let { c.settings.setScrapeKeywords(it) }
+                            refreshing = true
+                            refreshMsg = runCatching { c.deals.refresh() }
+                                .fold({ "تم ✓ — ${it.size} عرض جديد" }, { it.userMessage() })
+                            refreshing = false
+                        }
+                    }) { Text(if (refreshing) "جاري القراءة…" else "حفظ وتحديث الآن") }
+                }
+                refreshMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+            }
+            Section("خادم العروض (اختياري)") {
                 OutlinedTextField(url.orEmpty(), { url = it }, Modifier.fillMaxWidth(), label = { Text("عنوان الخادم") },
                     placeholder = { Text("https://api.example.com") }, singleLine = true)
                 Button(onClick = { test() }) { Text("حفظ واختبار الاتصال") }
@@ -94,7 +125,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             style = MaterialTheme.typography.labelMedium)
                     }
                 }
-                Text("بدون خادم: قسم SHEIN يشتغل بالسعر اللي تدخله، والعروض مش هتظهر لأننا مابنعرضش أسعار غير موثقة.",
+                Text("سيبه فاضي علشان التطبيق يقرا العروض من المواقع مباشرة. لو حطيت سيرفر، العروض هتيجي منه بدل كده.",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Section("المظهر") {

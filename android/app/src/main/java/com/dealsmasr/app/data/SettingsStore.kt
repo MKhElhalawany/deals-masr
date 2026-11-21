@@ -20,6 +20,11 @@ import kotlinx.serialization.json.Json
 
 private val Context.dataStore by preferencesDataStore("settings")
 
+val DEFAULT_KEYWORDS = listOf(
+    "air fryer", "smart watch", "headphones", "laptop", "mobile phone", "perfume", "vacuum cleaner",
+    "blender", "coffee maker", "television", "sneakers", "power bank",
+)
+
 enum class ThemeMode { SYSTEM, LIGHT, DARK }
 
 data class AppSettings(
@@ -32,6 +37,9 @@ data class AppSettings(
     val customerAddress: String,
     val lastRefresh: Long,
     val config: ConfigDto?,
+    val scrapeKeywords: List<String>,
+    val scrapeStores: Set<String>,
+    val scrapeStatus: Map<String, String>,
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -55,6 +63,11 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val lastRefresh = longPreferencesKey("last_refresh")
         val lastNotif = longPreferencesKey("last_notification_ts")
         val config = stringPreferencesKey("config_json")
+        val keywords = stringPreferencesKey("scrape_keywords")
+        val stores = stringPreferencesKey("scrape_stores")
+        val status = stringPreferencesKey("scrape_status")
+        val cursor = longPreferencesKey("scrape_cursor")
+        val alertCheck = longPreferencesKey("alerts_last_check")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -71,6 +84,9 @@ class SettingsStore(private val context: Context, private val json: Json) {
         customerAddress = this[K.address].orEmpty(),
         lastRefresh = this[K.lastRefresh] ?: 0L,
         config = this[K.config]?.let { runCatching { json.decodeFromString(ConfigDto.serializer(), it) }.getOrNull() },
+        scrapeKeywords = (this[K.keywords] ?: DEFAULT_KEYWORDS.joinToString("\n")).split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() },
+        scrapeStores = (this[K.stores] ?: "amazon,jumia").split(",").filter { it.isNotBlank() }.toSet(),
+        scrapeStatus = (this[K.status] ?: "").split("\n").mapNotNull { l -> l.split("|", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap(),
     )
 
     suspend fun setServerUrl(v: String) = context.dataStore.edit { it[K.server] = v.trim() }
@@ -82,6 +98,21 @@ class SettingsStore(private val context: Context, private val json: Json) {
     suspend fun saveCustomer(name: String, phone: String, address: String) = context.dataStore.edit {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
+    suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    suspend fun setScrapeStores(v: Set<String>) = context.dataStore.edit { it[K.stores] = v.joinToString(",") }
+    suspend fun setScrapeStatus(store: String, text: String) = context.dataStore.edit { p ->
+        val cur = (p[K.status] ?: "").split("\n").filter { it.isNotBlank() && !it.startsWith("$store|") }
+        p[K.status] = (cur + "$store|${text.replace("\n", " ")}").joinToString("\n")
+    }
+    /** Returns the current keyword cursor and advances it by [step]. */
+    suspend fun nextKeywordCursor(step: Int): Long {
+        var value = 0L
+        context.dataStore.edit { p -> value = p[K.cursor] ?: 0L; p[K.cursor] = value + step }
+        return value
+    }
+    suspend fun lastAlertCheck(): Long = context.dataStore.data.first()[K.alertCheck] ?: 0L
+    suspend fun setLastAlertCheck(v: Long) = context.dataStore.edit { it[K.alertCheck] = v }
+
     suspend fun lastNotificationTs(): Long = context.dataStore.data.first()[K.lastNotif] ?: 0L
     suspend fun setLastNotificationTs(v: Long) = context.dataStore.edit { it[K.lastNotif] = v }
 }

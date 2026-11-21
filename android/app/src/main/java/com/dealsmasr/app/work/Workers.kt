@@ -67,14 +67,20 @@ object Notifier {
     }
 }
 
-/** Periodic: refresh deal snapshot, re-verify favourites, run user alerts, fetch major-deal events. */
+/** Periodic (every 15 min, Android's minimum): refresh deal snapshot, re-verify favourites, run user alerts, fetch major-deal events. */
 class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         val c = (applicationContext as DealsApp).container
         val s = c.settings.current()
-        if (!s.hasServer) return Result.success()
         return try {
-            c.deals.refresh()
+            val fresh = c.deals.refreshIfDue(10 * 60_000L)
+            if (s.notificationsEnabled && s.majorDealAlerts) {
+                fresh.filter { it.discountPct >= 50 }.sortedByDescending { it.discountPct }.take(3).forEach { d ->
+                    Notifier.show(applicationContext, d.id.hashCode(), Notifier.CH_DEALS,
+                        "عرض جديد -${d.discountPct.toInt()}% 🔥 على ${d.marketplaceName}",
+                        "${d.title} — ${Money.egp(d.currentPrice)} بدل ${Money.egp(d.originalPrice)}", "product/${d.id}")
+                }
+            }
             if (s.notificationsEnabled) {
                 c.deals.refreshFavorites().take(3).forEach { d ->
                     Notifier.show(applicationContext, d.favorite.productId.hashCode(), Notifier.CH_DEALS,
@@ -131,8 +137,8 @@ object WorkScheduler {
         val wm = WorkManager.getInstance(ctx)
         val net = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
         wm.enqueueUniquePeriodicWork(
-            "deal_refresh", ExistingPeriodicWorkPolicy.KEEP,
-            PeriodicWorkRequestBuilder<DealRefreshWorker>(6, TimeUnit.HOURS).setConstraints(net).build(),
+            "deal_refresh", ExistingPeriodicWorkPolicy.UPDATE,
+            PeriodicWorkRequestBuilder<DealRefreshWorker>(15, TimeUnit.MINUTES).setConstraints(net).build(),
         )
         wm.enqueueUniquePeriodicWork(
             "order_milestones", ExistingPeriodicWorkPolicy.KEEP,

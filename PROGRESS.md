@@ -24,6 +24,15 @@
 5. Orders (persistence, server sync, 35-day countdown, milestones): done
 6. Testing: backend + core done; on-device testing pending APK build
 
+## v1.1: serverless scraping mode
+- [x] With no server configured, the app reads Amazon.eg search (pct-off filter) and Jumia catalogue pages
+      directly from the phone (OkHttp + Jsoup), rotating 3 keywords per run, 1.5 s between requests
+- [x] Every 10 min while open (foreground loop), every 15 min in background (WorkManager minimum)
+- [x] Local price history (Room v2 `price_points`, migration 1→2), dedupe by store id, 48 h expiry
+- [x] Per-store status in Settings (ok / blocked / 0 products) for diagnosing layout changes
+- [ ] Selectors verified only against fixtures + Amazon live sample; GitHub runners are blocked by all 3 sites,
+      so first live check happens on a phone. Noon not supported (client-rendered).
+
 ## Next
 - Run CI, fix any compile errors, install APK, smoke-test on a device
 - Obtain Amazon Associates EG / Jumia KOL / noon network feed access and set env vars

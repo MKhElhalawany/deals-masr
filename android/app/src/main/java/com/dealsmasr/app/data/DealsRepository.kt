@@ -6,6 +6,7 @@ import com.dealsmasr.app.data.local.DealDao
 import com.dealsmasr.app.data.local.DealEntity
 import com.dealsmasr.app.data.local.FavoriteDao
 import com.dealsmasr.app.data.local.FavoriteEntity
+import com.dealsmasr.app.data.local.toDto
 import com.dealsmasr.app.data.local.toEntity
 import com.dealsmasr.app.data.local.toFavorite
 import com.dealsmasr.app.data.remote.ApiProvider
@@ -33,6 +34,10 @@ class DealsRepository(
     private val favoriteDao: FavoriteDao,
     private val alertDao: AlertDao,
 ) {
+    /** Used when no backend server is configured: reads store pages directly. */
+    val local = LocalDeals(settings, dealDao)
+    private suspend fun isLocal() = !settings.current().hasServer
+
     val cachedDeals: Flow<List<DealEntity>> = dealDao.observeAll()
     val favorites: Flow<List<FavoriteEntity>> = favoriteDao.observeAll()
     val favoriteIds: Flow<List<String>> = favoriteDao.observeIds()
@@ -40,8 +45,9 @@ class DealsRepository(
 
     private suspend fun api(): DealsApi = apiProvider.get(settings.current().serverUrl)
 
-    /** Refresh config + the deal snapshot (max [pages] × 50 deals, highest discount first). */
-    suspend fun refresh(pages: Int = 4) {
+    /** Refresh deals. Returns newly discovered deals (local mode only). */
+    suspend fun refresh(pages: Int = 4): List<DealDto> {
+        if (isLocal()) return local.refresh()
         val api = api()
         runCatching { settings.saveConfig(api.config()) }
         val all = mutableListOf<DealDto>()
@@ -52,10 +58,17 @@ class DealsRepository(
         }
         dealDao.replaceAll(all.distinctBy { it.id }.map { it.toEntity() })
         settings.setLastRefresh(System.currentTimeMillis())
+        return emptyList()
+    }
+
+    /** Refreshes only if the last refresh is older than [maxAgeMillis]. */
+    suspend fun refreshIfDue(maxAgeMillis: Long): List<DealDto> {
+        val last = settings.current().lastRefresh
+        return if (System.currentTimeMillis() - last >= maxAgeMillis) refresh() else emptyList()
     }
 
     suspend fun search(query: String, filters: SearchFilters, sort: String, page: Int = 1): DealPage =
-        api().search(
+        if (isLocal()) local.search(query, filters, sort, page) else api().search(
             q = query.trim(),
             stores = filters.stores.takeIf { it.isNotEmpty() }?.joinToString(","),
             minDiscount = filters.minDiscount?.takeIf { it > 0 },
@@ -66,8 +79,8 @@ class DealsRepository(
             page = page,
         )
 
-    suspend fun product(id: String): DealDto = api().product(id)
-    suspend fun marketplaces(): List<MarketplaceDto> = api().marketplaces()
+    suspend fun product(id: String): DealDto = if (isLocal()) local.product(id) else api().product(id)
+    suspend fun marketplaces(): List<MarketplaceDto> = if (isLocal()) local.marketplaces() else api().marketplaces()
 
     suspend fun toggleFavorite(d: DealDto, isFavorite: Boolean) {
         if (isFavorite) favoriteDao.delete(d.id) else favoriteDao.upsert(d.toFavorite(System.currentTimeMillis()))
@@ -80,12 +93,17 @@ class DealsRepository(
         val favs = favoriteDao.all()
         if (favs.isEmpty()) return emptyList()
         val drops = mutableListOf<PriceDrop>()
+        val localMode = isLocal()
         favs.chunked(100).forEach { chunk ->
-            val fresh = api().products(chunk.joinToString(",") { it.productId }).associateBy { it.id }
+            val fresh = if (localMode) {
+                local.cached(chunk.map { it.productId }).map { it.toDto() }.associateBy { it.id }
+            } else {
+                api().products(chunk.joinToString(",") { it.productId }).associateBy { it.id }
+            }
             chunk.forEach { f ->
                 val d = fresh[f.productId]
                 if (d == null) {
-                    favoriteDao.upsert(f.copy(active = false))
+                    if (!localMode) favoriteDao.upsert(f.copy(active = false)) // local: not re-seen yet, keep snapshot
                 } else {
                     if (d.active && d.currentPrice < f.currentPrice) drops += PriceDrop(f, d.currentPrice)
                     favoriteDao.upsert(d.toFavorite(f.addedAt))
@@ -107,6 +125,10 @@ class DealsRepository(
 
     /** Runs every alert as a search; returns (alert, new matching deals) pairs. */
     suspend fun checkAlerts(): List<Pair<AlertEntity, List<DealDto>>> {
+        if (isLocal()) { // each alert = live page reads, so at most hourly
+            if (System.currentTimeMillis() - settings.lastAlertCheck() < 60 * 60_000) return emptyList()
+            settings.setLastAlertCheck(System.currentTimeMillis())
+        }
         val out = mutableListOf<Pair<AlertEntity, List<DealDto>>>()
         for (a in alertDao.all()) {
             val res = runCatching {
@@ -123,6 +145,7 @@ class DealsRepository(
     }
 
     suspend fun majorDealNotifications(): List<NotificationDto> {
+        if (isLocal()) return emptyList()
         val since = settings.lastNotificationTs()
         val list = api().notifications(since)
         list.maxOfOrNull { it.createdAt }?.let { settings.setLastNotificationTs(it) }

@@ -44,7 +44,6 @@ import com.dealsmasr.app.core.DealSort
 import com.dealsmasr.app.ui.appViewModel
 import com.dealsmasr.app.ui.components.ErrorState
 import com.dealsmasr.app.ui.components.MessageState
-import com.dealsmasr.app.ui.components.NoServerState
 import com.dealsmasr.app.ui.components.ProductCard
 import com.dealsmasr.app.ui.components.SkeletonCard
 import com.dealsmasr.app.ui.home.DealsViewModel
@@ -114,7 +113,6 @@ fun DealsScreen(initialTier: String?, onProduct: (String) -> Unit, onSettings: (
             }
             PullToRefreshBox(isRefreshing = s.loading, onRefresh = { vm.refresh() }, modifier = Modifier.fillMaxSize()) {
                 when {
-                    !s.hasServer -> NoServerState(onSettings)
                     s.deals.isEmpty() && s.error != null -> ErrorState(s.error!!, { vm.refresh() })
                     s.deals.isEmpty() && !s.loaded -> SkeletonGrid()
                     shown.isEmpty() -> MessageState(Icons.Outlined.LocalOffer, "لا توجد عروض في هذا القسم الآن",

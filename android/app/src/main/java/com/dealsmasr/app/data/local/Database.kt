@@ -14,6 +14,8 @@ import androidx.room.RoomDatabase
 import androidx.room.Transaction
 import androidx.room.Update
 import androidx.room.Upsert
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.dealsmasr.app.core.Sortable
 import com.dealsmasr.app.data.remote.DealDto
 import kotlinx.coroutines.flow.Flow
@@ -48,6 +50,15 @@ fun DealEntity.toDto() = DealDto(
     url = url, category = category, rating = rating, ratingCount = ratingCount, originalPrice = originalPrice,
     currentPrice = currentPrice, discountPct = discountPct, savings = savings, dealSince = dealSince,
     lastChecked = lastChecked,
+)
+
+/** Locally recorded price observations (scraping mode). */
+@Entity(tableName = "price_points", primaryKeys = ["productId", "checkedAt"])
+data class PricePointEntity(
+    val productId: String,
+    val price: Double,
+    val original: Double,
+    val checkedAt: Long,
 )
 
 @Entity(tableName = "favorites")
@@ -136,6 +147,13 @@ data class OrderEntity(
 @Dao
 abstract class DealDao {
     @Query("SELECT * FROM deals") abstract fun observeAll(): Flow<List<DealEntity>>
+    @Query("SELECT * FROM deals WHERE id = :id") abstract suspend fun get(id: String): DealEntity?
+    @Query("SELECT * FROM deals WHERE id IN (:ids)") abstract suspend fun getAll(ids: List<String>): List<DealEntity>
+    @Upsert abstract suspend fun upsertAll(items: List<DealEntity>)
+    @Query("DELETE FROM deals WHERE lastChecked < :beforeSeconds") abstract suspend fun pruneOlderThan(beforeSeconds: Long): Int
+    @Query("SELECT * FROM price_points WHERE productId = :id ORDER BY checkedAt") abstract suspend fun history(id: String): List<PricePointEntity>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) abstract suspend fun addPoints(points: List<PricePointEntity>)
+    @Query("DELETE FROM price_points WHERE productId NOT IN (SELECT id FROM deals)") abstract suspend fun prunePoints()
     @Query("DELETE FROM deals") abstract suspend fun clear()
     @Insert(onConflict = OnConflictStrategy.REPLACE) abstract suspend fun insertAll(items: List<DealEntity>)
 
@@ -182,8 +200,9 @@ interface OrderDao {
 }
 
 @Database(
-    entities = [DealEntity::class, FavoriteEntity::class, AlertEntity::class, CartItemEntity::class, OrderEntity::class],
-    version = 1,
+    entities = [DealEntity::class, FavoriteEntity::class, AlertEntity::class, CartItemEntity::class, OrderEntity::class,
+        PricePointEntity::class],
+    version = 2,
     exportSchema = true,
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -195,6 +214,15 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         fun build(context: Context): AppDatabase =
-            Room.databaseBuilder(context, AppDatabase::class.java, "deals.db").build()
+            Room.databaseBuilder(context, AppDatabase::class.java, "deals.db").addMigrations(MIGRATION_1_2).build()
+
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `price_points` (`productId` TEXT NOT NULL, `price` REAL NOT NULL, " +
+                        "`original` REAL NOT NULL, `checkedAt` INTEGER NOT NULL, PRIMARY KEY(`productId`, `checkedAt`))"
+                )
+            }
+        }
     }
 }

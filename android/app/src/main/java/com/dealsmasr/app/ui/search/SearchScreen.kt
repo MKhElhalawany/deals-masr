@@ -128,9 +128,14 @@ class SearchViewModel(private val repo: DealsRepository) : ViewModel() {
             _state.update { it.copy(loadingMore = true) }
             runCatching { repo.search(s.query, s.filters, s.sort.apiKey, s.page + 1) }
                 .onSuccess { p ->
-                    _state.update { it.copy(loadingMore = false, results = (it.results + p.items).distinctBy { d -> d.id }, page = p.page) }
+                    _state.update {
+                        val merged = (it.results + p.items).distinctBy { d -> d.id }
+                        // Server pages carry the real total; local pages report "+1" while more pages exist.
+                        val total = if (p.items.isEmpty()) merged.size else maxOf(it.total, merged.size + if (p.total > p.items.size) 1 else 0)
+                        it.copy(loadingMore = false, results = merged, page = p.page, total = total)
+                    }
                 }
-                .onFailure { _state.update { it.copy(loadingMore = false) } }
+                .onFailure { _state.update { s2 -> s2.copy(loadingMore = false, total = s2.results.size) } }
         }
     }
 
