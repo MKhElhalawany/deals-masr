@@ -6,6 +6,7 @@ android/local.properties
 android/.idea/
 *.iml
 *.keystore
+!android/app/debug.keystore
 # Backend
 backend/data/
 backend/.env

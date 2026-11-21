@@ -20,8 +20,19 @@ android {
         buildConfigField("String", "DEFAULT_API_URL", "\"$apiBaseUrl\"")
     }
 
+    // Fixed debug key (not a secret) so every CI build can update the previously installed app.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
+            signingConfig = signingConfigs.getByName("debug")
             applicationIdSuffix = ".debug"
             manifestPlaceholders["cleartext"] = "true"
         }
