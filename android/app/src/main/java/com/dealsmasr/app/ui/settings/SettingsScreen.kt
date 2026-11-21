@@ -2,7 +2,9 @@ package com.dealsmasr.app.ui.settings
 
 import android.Manifest
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -29,6 +31,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
@@ -49,6 +52,7 @@ import com.dealsmasr.app.data.ThemeMode
 import com.dealsmasr.app.data.remote.MarketplaceDto
 import com.dealsmasr.app.ui.appContainer
 import com.dealsmasr.app.ui.components.userMessage
+import com.dealsmasr.app.work.LiveScanService
 import com.dealsmasr.app.work.Notifier
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
@@ -104,6 +108,42 @@ fun SettingsScreen(onBack: () -> Unit) {
     }) { pad ->
         val st = s ?: return@Scaffold
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (!st.hasServer) Section("المراقبة المباشرة (حتى والأبليكيشن مقفول)") {
+                Toggle("تشغيل المراقبة المباشرة", st.liveScan) { on ->
+                    scope.launch {
+                        c.settings.setLiveScan(on)
+                        if (on) {
+                            if (Build.VERSION.SDK_INT >= 33 && !Notifier.canNotify(ctx)) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            LiveScanService.start(ctx)
+                        } else LiveScanService.stop(ctx)
+                    }
+                }
+                Text("بيقرا صفحة كل:", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(10, 20, 30, 60).forEach { sec ->
+                        FilterChip(selected = st.liveIntervalSec == sec, onClick = { scope.launch { c.settings.setLiveInterval(sec) } },
+                            label = { Text("$sec ث") })
+                    }
+                }
+                Text("كل متجر بيتقري بالدور، فكل ما الرقم يقل التحديث يبقى أسرع بس استهلاك النت والبطارية يزيد واحتمال الحجب يزيد. " +
+                    "تقريباً: كل 20 ثانية ≈ 100–150 ميجا في الساعة.",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Toggle("على Wi-Fi بس", st.liveWifiOnly) { on -> scope.launch { c.settings.setLiveWifiOnly(on) } }
+                Text("ابعتلي إشعار من خصم:", style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(10, 30, 50, 70).forEach { p ->
+                        FilterChip(selected = st.notifyMinPct == p, onClick = { scope.launch { c.settings.setNotifyMinPct(p) } },
+                            label = { Text("$p%+") })
+                    }
+                }
+                Text("10–29% إشعار هادي مجمّع · 30%+ 🔥 عادي · 50%+ ⚡ بيظهر فوق الشاشة · 70%+ 🚨 «الحق!» باهتزاز قوي",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = {
+                    runCatching {
+                        ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
+                    }
+                }) { Text("اسمح بالشغل في الخلفية (البطارية)") }
+            }
             if (!st.hasServer) Section("القراءة المباشرة من المواقع") {
                 Text("التطبيق بيقرا صفحات العروض من المواقع كل 10 دقايق وهو مفتوح، وكل 15 دقيقة في الخلفية.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

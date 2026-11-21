@@ -23,6 +23,8 @@ import kotlinx.coroutines.launch
 import com.dealsmasr.app.ui.AppNav
 import com.dealsmasr.app.ui.ExternalNav
 import com.dealsmasr.app.ui.theme.DealsTheme
+import com.dealsmasr.app.work.DealAlerts
+import com.dealsmasr.app.work.LiveScanService
 import com.dealsmasr.app.work.Notifier
 
 class MainActivity : ComponentActivity() {
@@ -34,6 +36,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) handleIntent(intent)
         val container = (application as DealsApp).container
+        DealAlerts.resetSummary()
+        lifecycleScope.launch {
+            val s = container.settings.current()
+            if (s.liveScan && !s.hasServer) LiveScanService.start(this@MainActivity)
+        }
         // While the app is visible: refresh deals every 10 minutes.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {

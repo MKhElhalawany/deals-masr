@@ -28,6 +28,14 @@ import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
+/** Something the user may want to hear about: a newly seen deal or a lower price on a known one. */
+data class DealEvent(val deal: DealDto, val kind: Kind, val previousPrice: Double?) {
+    enum class Kind { NEW, PRICE_DROP }
+}
+
+/** One page the live monitor reads. */
+data class ScanTarget(val scraper: StoreScraper, val url: String, val label: String)
+
 /**
  * Serverless mode: reads Amazon.eg / Jumia public listing pages directly from the phone.
  * Every price shown is exactly what the store page displayed at [DealEntity.lastChecked].
@@ -44,8 +52,8 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
         return pct.takeIf { it >= minDiscount && it <= 95.0 }
     }
 
-    /** Validates, stores (with price history) and returns (entity, isNew) pairs. */
-    private suspend fun save(items: List<ScrapedItem>, minDiscount: Double): List<Pair<DealEntity, Boolean>> {
+    /** Validates, stores (with price history) and returns each saved deal with its event (if any). */
+    private suspend fun save(items: List<ScrapedItem>, minDiscount: Double): List<Pair<DealEntity, DealEvent?>> {
         val good = items.mapNotNull { i -> valid(i, minDiscount)?.let { i to it } }.distinctBy { it.first.id }
         if (good.isEmpty()) return emptyList()
         val now = nowSec()
@@ -62,7 +70,14 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
                 originalPrice = i.originalPrice, currentPrice = i.currentPrice, discountPct = pct,
                 savings = DealMath.savings(i.originalPrice, i.currentPrice),
                 dealSince = old?.dealSince ?: now, lastChecked = now,
-            ) to (old == null)
+            ).let { e ->
+                val event = when {
+                    old == null -> DealEvent(e.toDto(), DealEvent.Kind.NEW, null)
+                    i.currentPrice < old.currentPrice - 0.5 -> DealEvent(e.toDto(), DealEvent.Kind.PRICE_DROP, old.currentPrice)
+                    else -> null
+                }
+                e to event
+            }
         }
         dealDao.upsertAll(out.map { it.first })
         dealDao.addPoints(points)
@@ -78,7 +93,7 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
      * Reads the next [keywordsPerRun] keywords (rotating) from each enabled store.
      * Returns newly discovered deals. Throws only if every store failed.
      */
-    suspend fun refresh(keywordsPerRun: Int = 3): List<DealDto> = mutex.withLock {
+    suspend fun refresh(keywordsPerRun: Int = 3): List<DealEvent> = mutex.withLock {
         withContext(Dispatchers.IO) {
             val s = settings.current()
             val kws = s.scrapeKeywords
@@ -88,7 +103,7 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
             val n = minOf(keywordsPerRun, kws.size)
             val start = if (n > 0) settings.nextKeywordCursor(n) else 0L
             val batch = (0 until n).map { kws[((start + it) % kws.size).toInt()] }
-            val fresh = mutableListOf<DealDto>()
+            val fresh = mutableListOf<DealEvent>()
             val errors = mutableListOf<String>()
             var anyOk = false
             val jobs: List<Pair<StoreScraper, List<String>>> =
@@ -101,7 +116,7 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
                             cards += r.cardsSeen
                             val saved = save(r.items, s.minDiscount())
                             deals += saved.size
-                            fresh += saved.filter { it.second }.map { it.first.toDto() }
+                            fresh += saved.mapNotNull { it.second }
                         }
                         is ScrapeResult.Blocked -> { problem = r.reason; break }
                         is ScrapeResult.Failed -> problem = r.reason
@@ -170,6 +185,40 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
 
     suspend fun cached(ids: List<String>) = dealDao.getAll(ids)
 
+    /** Pages the live monitor cycles through: keyword searches per store, store deal pages, user pages. */
+    suspend fun liveTargets(): List<ScanTarget> {
+        val s = settings.current()
+        val perStore = s.scrapeStores.mapNotNull { SCRAPERS[it] }.map { st ->
+            st.dealPages.map { ScanTarget(st, it, "${st.nameAr} · صفحة العروض") } +
+                s.scrapeKeywords.map { kw -> ScanTarget(st, st.searchUrl(kw, 1), "${st.nameAr} · $kw") }
+        }
+        // interleave stores so each one is hit as rarely as possible
+        val mixed = mutableListOf<ScanTarget>()
+        val maxLen = perStore.maxOfOrNull { it.size } ?: 0
+        for (i in 0 until maxLen) perStore.forEach { list -> list.getOrNull(i)?.let { mixed += it } }
+        return mixed + s.extraPages.map { val c = CustomPageScraper(it); ScanTarget(c, it, "${c.nameAr} · صفحة مضافة") }
+    }
+
+    /** Reads one target, saves deals, returns events. Throws [StoreBlockedException] when the store blocks us. */
+    suspend fun scan(t: ScanTarget): List<DealEvent> = withContext(Dispatchers.IO) {
+        val s = settings.current()
+        when (val r = fetcher.fetchSmart(t.scraper, t.url)) {
+            is ScrapeResult.Ok -> {
+                val saved = save(r.items, s.minDiscount())
+                settings.setLastRefresh(System.currentTimeMillis())
+                status(t.scraper.id, "✓ ${saved.size} عرض من ${r.cardsSeen} منتج (${t.label.substringAfter("· ")})")
+                saved.mapNotNull { it.second }
+            }
+            is ScrapeResult.Blocked -> { status(t.scraper.id, "⚠️ ${r.reason}"); throw StoreBlockedException(t.scraper.id) }
+            is ScrapeResult.Failed -> { status(t.scraper.id, "⚠️ ${r.reason}"); emptyList() }
+        }
+    }
+
+    suspend fun prune() {
+        dealDao.pruneOlderThan(nowSec() - 48 * 3600)
+        dealDao.prunePoints()
+    }
+
     /** Fetches one page for [store] and saves its raw HTML so the user can share it for troubleshooting. */
     suspend fun diagnosticPage(store: String): File = withContext(Dispatchers.IO) {
         val s = settings.current()
@@ -186,3 +235,5 @@ class LocalDeals(private val context: Context, private val settings: SettingsSto
 }
 
 private fun AppSettings.minDiscount(): Double = config?.minDiscountPct ?: 10.0
+
+class StoreBlockedException(val store: String) : Exception(store)

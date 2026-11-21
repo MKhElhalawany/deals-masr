@@ -59,6 +59,8 @@ interface StoreScraper {
     val nameAr: String
     /** true = page needs JavaScript, always load it in the hidden browser. */
     val needsBrowser: Boolean get() = false
+    /** Store pages dedicated to deals, scanned in addition to keyword searches. */
+    val dealPages: List<String> get() = emptyList()
     fun searchUrl(query: String, page: Int): String
     fun parse(doc: Document): ScrapeResult
 }
@@ -108,6 +110,7 @@ object JumiaScraper : StoreScraper {
     override val id = "jumia"
     override val nameAr = "جوميا مصر"
     private val skuInUrl = Regex("""-(\d{5,})\.html""")
+    override val dealPages = listOf("https://www.jumia.com.eg/flash-sales/", "https://www.jumia.com.eg/catalog/?q=deals&sort=newest")
 
     override fun searchUrl(query: String, page: Int) =
         "https://www.jumia.com.eg/catalog/?q=${URLEncoder.encode(query, "UTF-8")}" + if (page > 1) "&page=$page" else ""
@@ -143,6 +146,9 @@ object JumiaScraper : StoreScraper {
 object AmazonScraper : StoreScraper {
     override val id = "amazon"
     override val nameAr = "أمازون مصر"
+    // newest discounted items first, 30%+ off
+    override val dealPages = listOf("https://www.amazon.eg/s?i=specialty-aps&pct-off=30-&s=date-desc-rank&language=en_AE",
+        "https://www.amazon.eg/s?k=deals&pct-off=50-&s=date-desc-rank&language=en_AE")
 
     /** pct-off asks Amazon itself to return only discounted items. */
     override fun searchUrl(query: String, page: Int) =

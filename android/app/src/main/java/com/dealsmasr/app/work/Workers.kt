@@ -39,6 +39,8 @@ object Notifier {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_DEALS, ctx.getString(R.string.channel_deals), NotificationManager.IMPORTANCE_DEFAULT))
         nm.createNotificationChannel(NotificationChannel(CH_ORDERS, ctx.getString(R.string.channel_orders), NotificationManager.IMPORTANCE_DEFAULT))
+        DealAlerts.createChannels(ctx)
+        LiveScanService.createChannel(ctx)
     }
 
     fun canNotify(ctx: Context): Boolean =
@@ -73,14 +75,9 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
         val c = (applicationContext as DealsApp).container
         val s = c.settings.current()
         return try {
-            val fresh = c.deals.refreshIfDue(10 * 60_000L)
-            if (s.notificationsEnabled && s.majorDealAlerts) {
-                fresh.filter { it.discountPct >= 50 }.sortedByDescending { it.discountPct }.take(3).forEach { d ->
-                    Notifier.show(applicationContext, d.id.hashCode(), Notifier.CH_DEALS,
-                        "عرض جديد -${d.discountPct.toInt()}% 🔥 على ${d.marketplaceName}",
-                        "${d.title} — ${Money.egp(d.currentPrice)} بدل ${Money.egp(d.originalPrice)}", "product/${d.id}")
-                }
-            }
+            // The live monitor (if on) already covers deal discovery; this is the fallback every 15 min.
+            val fresh = if (s.liveScan && !s.hasServer) emptyList() else c.deals.refreshIfDue(10 * 60_000L)
+            if (s.notificationsEnabled) DealAlerts.notify(applicationContext, fresh, s.notifyMinPct)
             if (s.notificationsEnabled) {
                 c.deals.refreshFavorites().take(3).forEach { d ->
                     Notifier.show(applicationContext, d.favorite.productId.hashCode(), Notifier.CH_DEALS,

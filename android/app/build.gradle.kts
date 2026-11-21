@@ -14,8 +14,8 @@ android {
         applicationId = "com.dealsmasr.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
         val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?).orEmpty()
         buildConfigField("String", "DEFAULT_API_URL", "\"$apiBaseUrl\"")
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -41,6 +42,10 @@ data class AppSettings(
     val scrapeStores: Set<String>,
     val scrapeStatus: Map<String, String>,
     val extraPages: List<String>,
+    val liveScan: Boolean,
+    val liveIntervalSec: Int,
+    val liveWifiOnly: Boolean,
+    val notifyMinPct: Int,
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -70,6 +75,10 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val cursor = longPreferencesKey("scrape_cursor")
         val alertCheck = longPreferencesKey("alerts_last_check")
         val extraPages = stringPreferencesKey("extra_pages")
+        val live = booleanPreferencesKey("live_scan")
+        val liveInterval = intPreferencesKey("live_interval")
+        val wifiOnly = booleanPreferencesKey("live_wifi_only")
+        val notifyMin = intPreferencesKey("notify_min_pct")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -89,6 +98,10 @@ class SettingsStore(private val context: Context, private val json: Json) {
         scrapeKeywords = (this[K.keywords] ?: DEFAULT_KEYWORDS.joinToString("\n")).split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() },
         scrapeStores = (this[K.stores] ?: "amazon,jumia,noon").split(",").filter { it.isNotBlank() }.toSet(),
         scrapeStatus = (this[K.status] ?: "").split("\n").mapNotNull { l -> l.split("|", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap(),
+        liveScan = this[K.live] ?: false,
+        liveIntervalSec = this[K.liveInterval] ?: 20,
+        liveWifiOnly = this[K.wifiOnly] ?: false,
+        notifyMinPct = this[K.notifyMin] ?: 10,
         extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
     )
 
@@ -102,6 +115,10 @@ class SettingsStore(private val context: Context, private val json: Json) {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
     suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    suspend fun setLiveScan(v: Boolean) = context.dataStore.edit { it[K.live] = v }
+    suspend fun setLiveInterval(v: Int) = context.dataStore.edit { it[K.liveInterval] = v }
+    suspend fun setLiveWifiOnly(v: Boolean) = context.dataStore.edit { it[K.wifiOnly] = v }
+    suspend fun setNotifyMinPct(v: Int) = context.dataStore.edit { it[K.notifyMin] = v }
     suspend fun setExtraPages(v: String) = context.dataStore.edit { it[K.extraPages] = v }
     suspend fun setScrapeStores(v: Set<String>) = context.dataStore.edit { it[K.stores] = v.joinToString(",") }
     suspend fun setScrapeStatus(store: String, text: String) = context.dataStore.edit { p ->

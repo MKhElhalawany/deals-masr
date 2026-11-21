@@ -47,7 +47,7 @@ class DealsRepository(
     private suspend fun api(): DealsApi = apiProvider.get(settings.current().serverUrl)
 
     /** Refresh deals. Returns newly discovered deals (local mode only). */
-    suspend fun refresh(pages: Int = 4): List<DealDto> {
+    suspend fun refresh(pages: Int = 4): List<DealEvent> {
         if (isLocal()) return local.refresh()
         val api = api()
         runCatching { settings.saveConfig(api.config()) }
@@ -63,7 +63,7 @@ class DealsRepository(
     }
 
     /** Refreshes only if the last refresh is older than [maxAgeMillis]. */
-    suspend fun refreshIfDue(maxAgeMillis: Long): List<DealDto> {
+    suspend fun refreshIfDue(maxAgeMillis: Long): List<DealEvent> {
         val last = settings.current().lastRefresh
         return if (System.currentTimeMillis() - last >= maxAgeMillis) refresh() else emptyList()
     }
