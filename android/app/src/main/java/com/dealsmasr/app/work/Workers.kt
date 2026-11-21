@@ -78,6 +78,7 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             // The live monitor (if on) already covers deal discovery; this is the fallback every 15 min.
             val fresh = if (s.liveScan && !s.hasServer) emptyList() else c.deals.refreshIfDue(10 * 60_000L)
             if (s.notificationsEnabled) DealAlerts.notify(applicationContext, fresh, s.notifyMinPct)
+            if (c.auth.isSignedIn) runCatching { OrderEvents.check(applicationContext, c) }
             if (s.notificationsEnabled) {
                 c.deals.refreshFavorites().take(3).forEach { d ->
                     Notifier.show(applicationContext, d.favorite.productId.hashCode(), Notifier.CH_DEALS,
@@ -109,7 +110,7 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
 class OrderMilestoneWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         val c = (applicationContext as DealsApp).container
-        runCatching { c.shein.syncOrders() }
+        runCatching { OrderEvents.check(applicationContext, c) }
         val s = c.settings.current()
         val now = System.currentTimeMillis()
         for (o in c.shein.allOrders()) {

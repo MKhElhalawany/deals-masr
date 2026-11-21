@@ -15,7 +15,10 @@ backend/   Python · FastAPI · SQLite: deal collection, price history, SHEIN qu
 docs/      INTEGRATIONS.md: which data sources are live and what credentials they need
 ```
 
-## 1. Backend
+## 0. Supabase (login + database)
+See **docs/SUPABASE_SETUP.md**. Build with `-PsupabaseUrl=… -PsupabaseAnonKey=…` or GitHub repository variables `SUPABASE_URL` / `SUPABASE_ANON_KEY`.
+
+## 1. Optional FastAPI backend
 
 ```bash
 cd backend

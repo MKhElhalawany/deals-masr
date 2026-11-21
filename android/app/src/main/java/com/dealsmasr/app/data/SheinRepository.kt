@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.put
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
@@ -68,6 +69,7 @@ sealed interface AddResult {
 
 class SheinRepository(
     private val context: Context,
+    private val supabase: com.dealsmasr.app.data.auth.Supabase,
     private val apiProvider: ApiProvider,
     private val settings: SettingsStore,
     private val cartDao: CartDao,
@@ -276,6 +278,7 @@ class SheinRepository(
         val items = cartDao.all()
         require(items.isNotEmpty()) { "السلة فاضية" }
         val cfg = s.pricing
+        val cloud = cloudEnabled()
         val b = breakdown(items, cfg) ?: throw IllegalStateException("بعض المنتجات لم يتم تسعيرها بعد")
         val id = UUID.randomUUID().toString().replace("-", "").take(10).uppercase()
         val createdAt = now()
@@ -295,10 +298,10 @@ class SheinRepository(
             deliveryFeeEgp = b.deliveryFeeEgp.toPlainString(), totalEgp = b.totalEgp.toPlainString(),
             pricingJson = json.encodeToString(PricingSnapshot.serializer(),
                 PricingSnapshot(cfg.sarToEgp.toPlainString(), cfg.multiplier.toPlainString(), cfg.deliveryFeeEgp.toPlainString())),
-            // Without a backend there is no admin step: sending the order confirms it and starts the countdown.
-            status = if (s.hasServer) "submitted" else "confirmed",
+            // With a backend (Supabase or API) the shop confirms the order; without one, sending confirms it.
+            status = if (s.hasServer || cloud) "submitted" else "confirmed",
             createdAt = createdAt,
-            confirmedAt = if (s.hasServer) null else createdAt,
+            confirmedAt = if (s.hasServer || cloud) null else createdAt,
             countdownDays = s.countdownDays,
             synced = false,
             whatsappText = summary,
@@ -306,7 +309,7 @@ class SheinRepository(
         )
         orderDao.upsert(order)
         settings.saveCustomer(name, phone, address)
-        if (s.hasServer) order = trySync(order, s.serverUrl)
+        if (cloud) order = tryCloud(order) else if (s.hasServer) order = trySync(order, s.serverUrl)
         cartDao.clear()
         return order
     }
@@ -319,8 +322,61 @@ class SheinRepository(
         order.copy(synced = true).also { orderDao.upsert(it) }
     }.getOrDefault(order)
 
+    private fun cloudEnabled() =
+        com.dealsmasr.app.data.auth.SupabaseConfig.configured && supabase.session.value != null
+
+    /** Saves the order in Supabase (RLS: only as "submitted", only for the signed-in user). */
+    private suspend fun tryCloud(order: OrderEntity): OrderEntity = runCatching {
+        val items = json.parseToJsonElement(order.itemsJson)
+        supabase.insert("orders", kotlinx.serialization.json.buildJsonObject {
+            put("id", kotlinx.serialization.json.JsonPrimitive(order.id))
+            put("customer_name", kotlinx.serialization.json.JsonPrimitive(order.customerName))
+            put("customer_phone", kotlinx.serialization.json.JsonPrimitive(order.customerPhone.filter { it.isDigit() || it == '+' }))
+            order.address?.let { put("address", kotlinx.serialization.json.JsonPrimitive(it)) }
+            order.notes?.let { put("notes", kotlinx.serialization.json.JsonPrimitive(it)) }
+            put("items", items)
+            put("subtotal_egp", kotlinx.serialization.json.JsonPrimitive(BigDecimal(order.subtotalEgp)))
+            put("delivery_fee_egp", kotlinx.serialization.json.JsonPrimitive(BigDecimal(order.deliveryFeeEgp)))
+            put("total_egp", kotlinx.serialization.json.JsonPrimitive(BigDecimal(order.totalEgp)))
+            put("pricing", json.parseToJsonElement(order.pricingJson))
+        })
+        order.copy(synced = true).also { orderDao.upsert(it) }
+    }.getOrElse { e ->
+        // duplicate key = already uploaded on an earlier attempt
+        if ((e as? com.dealsmasr.app.data.auth.SupabaseException)?.status == 409) order.copy(synced = true).also { orderDao.upsert(it) } else order
+    }
+
+    /** Pulls status/confirmation of my orders from Supabase. Returns orders that just got confirmed. */
+    private suspend fun syncCloud(): List<OrderEntity> {
+        val all = orderDao.all()
+        all.filter { !it.synced }.forEach { tryCloud(it) }
+        val uid = supabase.session.value?.userId ?: return emptyList()
+        val rows = json.parseToJsonElement(supabase.select("orders", "select=id,status,confirmed_at&user_id=eq.$uid&order=created_at.desc&limit=100"))
+            as kotlinx.serialization.json.JsonArray
+        val byId = orderDao.all().associateBy { it.id }
+        val newlyConfirmed = mutableListOf<OrderEntity>()
+        rows.forEach { r ->
+            val o = r as kotlinx.serialization.json.JsonObject
+            val local = byId[(o["id"] as kotlinx.serialization.json.JsonPrimitive).content] ?: return@forEach
+            val status = (o["status"] as kotlinx.serialization.json.JsonPrimitive).content
+            val confirmedAt = (o["confirmed_at"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+                ?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() }
+            if (status != local.status || confirmedAt != local.confirmedAt) {
+                val updated = local.copy(status = status, confirmedAt = confirmedAt ?: local.confirmedAt)
+                orderDao.upsert(updated)
+                if (local.confirmedAt == null && updated.confirmedAt != null) newlyConfirmed += updated
+            }
+        }
+        return newlyConfirmed
+    }
+
     /** Retries unsynced orders and pulls status/confirmation time from the backend. */
-    suspend fun syncOrders() {
+    suspend fun syncOrders(): List<OrderEntity> {
+        if (cloudEnabled()) return syncCloud()
+        syncLegacy(); return emptyList()
+    }
+
+    private suspend fun syncLegacy() {
         val s = settings.current()
         if (!s.hasServer) return
         val all = orderDao.all()

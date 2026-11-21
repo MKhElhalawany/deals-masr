@@ -53,13 +53,14 @@ import com.dealsmasr.app.data.remote.MarketplaceDto
 import com.dealsmasr.app.ui.appContainer
 import com.dealsmasr.app.ui.components.userMessage
 import com.dealsmasr.app.work.LiveScanService
+import com.dealsmasr.app.data.auth.AuthState
 import com.dealsmasr.app.work.Notifier
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
     val c = appContainer()
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
@@ -107,7 +108,16 @@ fun SettingsScreen(onBack: () -> Unit) {
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
     }) { pad ->
         val st = s ?: return@Scaffold
+        val authState by c.auth.state.collectAsStateWithLifecycle()
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            (authState as? AuthState.SignedIn)?.let { a ->
+                Section("حسابي") {
+                    Text(a.profile.fullName ?: "—", fontWeight = FontWeight.SemiBold)
+                    Text(listOfNotNull(a.email, a.profile.phone).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
+                    if (a.profile.isAdmin) Button(onClick = onAdminOrders, modifier = Modifier.fillMaxWidth()) { Text("إدارة الطلبات (أدمن)") }
+                    OutlinedButton(onClick = { scope.launch { LiveScanService.stop(ctx); c.auth.signOut() } }) { Text("تسجيل الخروج") }
+                }
+            }
             if (!st.hasServer) Section("تنبيهات العروض الفورية") {
                 Toggle("نبهني بأي عرض جديد أول ما ينزل", st.liveScan) { on ->
                     scope.launch {
@@ -234,7 +244,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                         } ?: run { refreshMsg = "لسه مفيش صفحة SHEIN اتقرت" }
                     }
                 }) { Text("تشخيص آخر صفحة SHEIN") }
-                OutlinedButton(onClick = { scope.launch { c.settings.setAdminMode(false) } }) { Text("خروج من وضع الأدمن") }
             }
         }
     }

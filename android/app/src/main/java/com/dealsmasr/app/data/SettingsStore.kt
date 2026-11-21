@@ -23,8 +23,6 @@ private val Context.dataStore by preferencesDataStore("settings")
 
 /** Orders are sent to this WhatsApp number (shop owner). */
 const val OWNER_WHATSAPP = "201050038728"
-/** PIN for the hidden admin settings (tap the app title 7 times). */
-const val ADMIN_PIN = "8728"
 
 val DEFAULT_KEYWORDS = listOf(
     "air fryer", "smart watch", "headphones", "laptop", "mobile phone", "perfume", "vacuum cleaner",
@@ -88,6 +86,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val notifyMin = intPreferencesKey("notify_min_pct")
         val admin = booleanPreferencesKey("admin_mode")
         val celebrated = stringPreferencesKey("celebrated_orders")
+        val adminSeen = stringPreferencesKey("admin_last_order_seen")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -126,6 +125,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
     suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    suspend fun lastAdminOrderSeen(): String = context.dataStore.data.first()[K.adminSeen].orEmpty()
+    suspend fun setLastAdminOrderSeen(v: String) = context.dataStore.edit { it[K.adminSeen] = v }
     suspend fun setAdminMode(v: Boolean) = context.dataStore.edit { it[K.admin] = v }
     suspend fun markCelebrated(orderId: String) = context.dataStore.edit {
         it[K.celebrated] = ((it[K.celebrated] ?: "").split(",").filter { x -> x.isNotBlank() } + orderId).takeLast(200).joinToString(",")

@@ -16,6 +16,17 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - run: python -m pytest -q
 
+  supabase-sql:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply migrations to a throwaway Postgres and run RLS tests
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql
+          for f in supabase/migrations/*.sql; do sudo -u postgres psql -v ON_ERROR_STOP=1 -f "$f"; done
+          sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/rls_test.sql
+
   android:
     runs-on: ubuntu-latest
     permissions:
@@ -30,6 +41,9 @@ jobs:
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
       - name: Build debug APK
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
         run: ./gradlew --no-daemon assembleDebug -PapiBaseUrl="${{ vars.API_BASE_URL }}"
       - uses: actions/upload-artifact@v4
         with:

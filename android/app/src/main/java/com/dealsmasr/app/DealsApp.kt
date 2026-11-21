@@ -16,7 +16,12 @@ class AppContainer(context: Context) {
     val db = AppDatabase.build(context)
     val settings = SettingsStore(context, api.json)
     val deals = DealsRepository(context, api, settings, db.deals(), db.favorites(), db.alerts())
-    val shein = SheinRepository(context, api, settings, db.cart(), db.orders())
+    val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main)
+    val sessionStore = com.dealsmasr.app.data.auth.SessionStore(context, api.json)
+    val supabase = com.dealsmasr.app.data.auth.Supabase(sessionStore, api.json)
+    val auth = com.dealsmasr.app.data.auth.AuthRepository(supabase, sessionStore, settings, api.json, appScope)
+    val admin = com.dealsmasr.app.data.auth.AdminRepository(supabase, api.json)
+    val shein = SheinRepository(context, supabase, api, settings, db.cart(), db.orders())
 }
 
 class DealsApp : Application() {

@@ -123,7 +123,8 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
             composable("favorites") {
                 FavoritesScreen(onBack = { nav.popBackStack() }, onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
             }
-            composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }) }
+            composable("settings") { SettingsScreen(onBack = { nav.popBackStack() }, onAdminOrders = { nav.navigate("admin_orders") }) }
+            composable("admin_orders") { com.dealsmasr.app.ui.admin.AdminOrdersScreen(onBack = { nav.popBackStack() }) }
             composable("checkout") {
                 CheckoutScreen(onBack = { nav.popBackStack() }, onPlaced = { id ->
                     nav.navigate("order/$id") { popUpTo("shein") }

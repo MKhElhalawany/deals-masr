@@ -14,10 +14,15 @@ android {
         applicationId = "com.dealsmasr.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3.0"
+        versionCode = 5
+        versionName = "2.0.0"
         val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?).orEmpty()
         buildConfigField("String", "DEFAULT_API_URL", "\"$apiBaseUrl\"")
+        // Supabase project URL + public anon/publishable key (not secret; data is protected by RLS).
+        // Supplied via -PsupabaseUrl / -PsupabaseAnonKey or env SUPABASE_URL / SUPABASE_ANON_KEY — never committed.
+        fun prop(name: String, env: String) = ((project.findProperty(name) as String?) ?: System.getenv(env)).orEmpty().trim()
+        buildConfigField("String", "SUPABASE_URL", "\"${prop("supabaseUrl", "SUPABASE_URL")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${prop("supabaseAnonKey", "SUPABASE_ANON_KEY")}\"")
     }
 
     // Fixed debug key (not a secret) so every CI build can update the previously installed app.
@@ -80,6 +85,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
     implementation(libs.jsoup)
+    implementation(libs.security.crypto)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }

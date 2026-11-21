@@ -33,6 +33,17 @@
 - [ ] Selectors verified only against fixtures + Amazon live sample; GitHub runners are blocked by all 3 sites,
       so first live check happens on a phone. Noon not supported (client-rendered).
 
+## v2.0: Supabase backend
+- [x] Email/password Login, Sign-up, Reset via Supabase Auth (REST, no SDK); tokens in Keystore-encrypted prefs, auto-refresh
+- [x] Schema + RLS migration `supabase/migrations/20261121000000_init.sql`: profiles (role), user_settings, stores,
+      deals, price_history, favorites, alerts, orders, app_config; auto profile on sign-up; server-stamped confirmed_at
+- [x] RLS tests `supabase/tests/rls_test.sql` (verified locally on Postgres 16 + run in CI; mutation-checked)
+- [x] Orders saved to Supabase; admin "إدارة الطلبات" screen confirms/advances orders; customer gets
+      "تم تأكيد طلبك" notification + celebration (polling: 2 min foreground / 15 min background)
+- [x] Admin role from DB replaces the old PIN
+- [ ] Favorites/alerts/settings cloud sync, server-side scraping into `deals` (tables + RLS ready)
+- [ ] Google / phone sign-in (needs Google Cloud OAuth client / SMS provider in Supabase)
+
 ## Next
 - Run CI, fix any compile errors, install APK, smoke-test on a device
 - Obtain Amazon Associates EG / Jumia KOL / noon network feed access and set env vars

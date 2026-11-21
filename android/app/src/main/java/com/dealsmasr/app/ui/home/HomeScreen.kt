@@ -45,7 +45,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.text.input.KeyboardType
-import com.dealsmasr.app.data.ADMIN_PIN
 import com.dealsmasr.app.ui.appContainer
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -127,38 +126,10 @@ fun HomeScreen(
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshIfStale() }
-    var taps by remember { mutableIntStateOf(0) }
-    var askPin by remember { mutableStateOf(false) }
-    val container = appContainer()
-    val scope = rememberCoroutineScope()
-    if (askPin) {
-        var pin by remember { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { askPin = false },
-            title = { Text("وضع الأدمن") },
-            text = {
-                OutlinedTextField(pin, { pin = it.filter(Char::isDigit) }, label = { Text("PIN") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword))
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (pin == ADMIN_PIN) { scope.launch { container.settings.setAdminMode(true) }; askPin = false; onSettings() }
-                    else pin = ""
-                }) { Text("دخول") }
-            },
-        )
-    }
-
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = {
-                    // 7 taps on the title → admin PIN
-                    Text("عروض مصر", style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
-                            taps++; if (taps >= 7) { taps = 0; askPin = true }
-                        })
-                },
+                title = { Text("عروض مصر", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = { IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "الإعدادات") } },
                 actions = { IconButton(onClick = onFavorites) { Icon(Icons.Outlined.FavoriteBorder, "المفضلة") } },
             )

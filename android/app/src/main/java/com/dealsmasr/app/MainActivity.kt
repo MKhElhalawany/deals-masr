@@ -26,6 +26,10 @@ import com.dealsmasr.app.ui.theme.DealsTheme
 import com.dealsmasr.app.work.DealAlerts
 import com.dealsmasr.app.work.LiveScanService
 import com.dealsmasr.app.work.Notifier
+import com.dealsmasr.app.work.OrderEvents
+import com.dealsmasr.app.data.auth.AuthState
+import com.dealsmasr.app.ui.auth.AuthScreen
+import com.dealsmasr.app.ui.auth.SplashScreen
 
 class MainActivity : ComponentActivity() {
     private var external by mutableStateOf(ExternalNav())
@@ -44,8 +48,14 @@ class MainActivity : ComponentActivity() {
         // While the app is visible: refresh deals every 10 minutes.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                var tick = 0
                 while (true) {
-                    runCatching { container.deals.refreshIfDue(10 * 60_000L) }
+                    if (container.auth.isSignedIn) {
+                        runCatching { container.deals.refreshIfDue(10 * 60_000L) }
+                        // every 2 minutes: order confirmations (customers) / new orders (admin)
+                        if (tick % 2 == 0) runCatching { OrderEvents.check(this@MainActivity, container) }
+                    }
+                    tick++
                     delay(60_000)
                 }
             }
@@ -58,13 +68,18 @@ class MainActivity : ComponentActivity() {
                     askPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
             }
+            val authState by container.auth.state.collectAsStateWithLifecycle()
             DealsTheme(settings?.theme ?: ThemeMode.SYSTEM) {
-                AppNav(
-                    external = external,
-                    onExternalConsumed = { external = ExternalNav() },
-                    sharedText = sharedText,
-                    onSharedConsumed = { sharedText = null },
-                )
+                when (authState) {
+                    AuthState.Loading -> SplashScreen()
+                    AuthState.NotConfigured, AuthState.SignedOut -> AuthScreen(notConfigured = authState == AuthState.NotConfigured)
+                    is AuthState.SignedIn -> AppNav(
+                        external = external,
+                        onExternalConsumed = { external = ExternalNav() },
+                        sharedText = sharedText,
+                        onSharedConsumed = { sharedText = null },
+                    )
+                }
             }
         }
     }
