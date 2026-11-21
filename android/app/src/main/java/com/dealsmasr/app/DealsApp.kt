@@ -15,7 +15,7 @@ class AppContainer(context: Context) {
     val api = ApiProvider()
     val db = AppDatabase.build(context)
     val settings = SettingsStore(context, api.json)
-    val deals = DealsRepository(api, settings, db.deals(), db.favorites(), db.alerts())
+    val deals = DealsRepository(context, api, settings, db.deals(), db.favorites(), db.alerts())
     val shein = SheinRepository(context, api, settings, db.cart(), db.orders())
 }
 

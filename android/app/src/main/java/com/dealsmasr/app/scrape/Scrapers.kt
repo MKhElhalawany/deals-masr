@@ -57,9 +57,51 @@ object PriceText {
 interface StoreScraper {
     val id: String
     val nameAr: String
+    /** true = page needs JavaScript, always load it in the hidden browser. */
+    val needsBrowser: Boolean get() = false
     fun searchUrl(query: String, page: Int): String
     fun parse(doc: Document): ScrapeResult
 }
+
+/** noon Egypt: client-rendered, so read via WebView and the generic card detector. */
+object NoonScraper : StoreScraper {
+    override val id = "noon"
+    override val nameAr = "نون مصر"
+    override val needsBrowser = true
+    override fun searchUrl(query: String, page: Int) =
+        "https://www.noon.com/egypt-ar/search/?q=${URLEncoder.encode(query, "UTF-8").replace("+", "%20")}" + if (page > 1) "&page=$page" else ""
+
+    override fun parse(doc: Document): ScrapeResult {
+        val cards = doc.select("a[href*=/p/]").size
+        val items = GenericParser.parse(doc, id) { url ->
+            // /egypt-ar/<slug>/<SKU>/p/?o=…  →  SKU
+            url.substringBefore("?").trimEnd('/').split('/').let { seg -> seg.getOrNull(seg.lastIndexOf("p") - 1) } ?: GenericParser.defaultId(url)
+        }
+        if (cards == 0 && doc.text().contains("Access Denied", true)) return ScrapeResult.Blocked("نون رفض الطلب")
+        return ScrapeResult.Ok(items, maxOf(cards, items.size))
+    }
+}
+
+/** Any page the user adds (talabat mart, offers pages…): hidden browser + generic card detector. */
+class CustomPageScraper(private val pageUrl: String) : StoreScraper {
+    private val host = runCatching { java.net.URI(pageUrl).host.orEmpty().removePrefix("www.") }.getOrDefault("")
+    override val id = when {
+        host.contains("talabat") -> "talabat"
+        host.contains("noon") -> "noon"
+        host.contains("amazon") -> "amazon"
+        host.contains("jumia") -> "jumia"
+        else -> host.substringBefore('.').ifBlank { "web" }
+    }
+    override val nameAr = STORE_NAMES[id] ?: host
+    override val needsBrowser = true
+    override fun searchUrl(query: String, page: Int) = pageUrl
+    override fun parse(doc: Document): ScrapeResult {
+        val items = GenericParser.parse(doc, id)
+        return ScrapeResult.Ok(items, maxOf(items.size, doc.select("img").size / 2))
+    }
+}
+
+val STORE_NAMES = mapOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر", "talabat" to "طلبات")
 
 /** Jumia Egypt public catalogue pages (server-rendered `article.prd` cards). */
 object JumiaScraper : StoreScraper {
@@ -75,8 +117,8 @@ object JumiaScraper : StoreScraper {
         if (title.contains("access denied") || title.contains("attention required") || doc.select("article.prd").isEmpty() &&
             doc.text().contains("captcha", ignoreCase = true)) return ScrapeResult.Blocked("جوميا رفض الطلب")
         val cards = doc.select("article.prd")
-        val items = cards.mapNotNull { card(it) }
-        return ScrapeResult.Ok(items, cards.size)
+        val items = cards.mapNotNull { card(it) }.ifEmpty { GenericParser.parse(doc, id) }
+        return ScrapeResult.Ok(items, maxOf(cards.size, items.size))
     }
 
     private fun card(c: Element): ScrapedItem? {
@@ -112,8 +154,8 @@ object AmazonScraper : StoreScraper {
         if (doc.selectFirst("form[action*=validateCaptcha]") != null || html.contains("Type the characters you see") ||
             html.contains("api-services-support@amazon.com")) return ScrapeResult.Blocked("أمازون طلب تحقق (كابتشا)")
         val cards = doc.select("[data-component-type=s-search-result]")
-        val items = cards.mapNotNull { card(it) }
-        return ScrapeResult.Ok(items, cards.size)
+        val items = cards.mapNotNull { card(it) }.ifEmpty { GenericParser.parse(doc, id) }
+        return ScrapeResult.Ok(items, maxOf(cards.size, items.size))
     }
 
     private fun card(c: Element): ScrapedItem? {
@@ -134,7 +176,22 @@ object AmazonScraper : StoreScraper {
 }
 
 /** Fetches store pages like a normal mobile browser, with cookies and a polite delay between requests. */
-class PageFetcher {
+class PageFetcher(private val web: WebFetcher? = null) {
+    /** Last raw HTML per store (for the "share page" diagnostic). */
+    val lastHtml = ConcurrentHashMap<String, String>()
+
+    /** Plain HTTP first; hidden browser if the page needs JS, was blocked, or showed no products. */
+    suspend fun fetchSmart(scraper: StoreScraper, url: String): ScrapeResult {
+        if (!scraper.needsBrowser) {
+            val r = fetch(scraper, url)
+            if (r is ScrapeResult.Ok && r.cardsSeen > 0) return r
+            if (web == null) return r
+        }
+        val html = web?.render(url) ?: return ScrapeResult.Failed("المتصفح الداخلي ماقدرش يفتح الصفحة")
+        lastHtml[scraper.id] = html
+        return runCatching { scraper.parse(Jsoup.parse(html, url)) }.getOrElse { ScrapeResult.Failed(it.message ?: "parse error") }
+    }
+
     private val cookies = ConcurrentHashMap<String, List<Cookie>>()
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -165,7 +222,11 @@ class PageFetcher {
                 when {
                     r.code == 403 || r.code == 503 || r.code == 429 -> ScrapeResult.Blocked("الموقع رفض الطلب (${r.code})")
                     !r.isSuccessful -> ScrapeResult.Failed("HTTP ${r.code}")
-                    else -> scraper.parse(Jsoup.parse(r.body?.string().orEmpty(), r.request.url.toString()))
+                    else -> {
+                        val html = r.body?.string().orEmpty()
+                        lastHtml[scraper.id] = html
+                        scraper.parse(Jsoup.parse(html, r.request.url.toString()))
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -174,4 +235,4 @@ class PageFetcher {
     }
 }
 
-val SCRAPERS: Map<String, StoreScraper> = listOf(AmazonScraper, JumiaScraper).associateBy { it.id }
+val SCRAPERS: Map<String, StoreScraper> = listOf(AmazonScraper, JumiaScraper, NoonScraper).associateBy { it.id }

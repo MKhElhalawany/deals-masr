@@ -40,6 +40,7 @@ data class AppSettings(
     val scrapeKeywords: List<String>,
     val scrapeStores: Set<String>,
     val scrapeStatus: Map<String, String>,
+    val extraPages: List<String>,
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -68,6 +69,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val status = stringPreferencesKey("scrape_status")
         val cursor = longPreferencesKey("scrape_cursor")
         val alertCheck = longPreferencesKey("alerts_last_check")
+        val extraPages = stringPreferencesKey("extra_pages")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -85,8 +87,9 @@ class SettingsStore(private val context: Context, private val json: Json) {
         lastRefresh = this[K.lastRefresh] ?: 0L,
         config = this[K.config]?.let { runCatching { json.decodeFromString(ConfigDto.serializer(), it) }.getOrNull() },
         scrapeKeywords = (this[K.keywords] ?: DEFAULT_KEYWORDS.joinToString("\n")).split("\n", ",").map { it.trim() }.filter { it.isNotEmpty() },
-        scrapeStores = (this[K.stores] ?: "amazon,jumia").split(",").filter { it.isNotBlank() }.toSet(),
+        scrapeStores = (this[K.stores] ?: "amazon,jumia,noon").split(",").filter { it.isNotBlank() }.toSet(),
         scrapeStatus = (this[K.status] ?: "").split("\n").mapNotNull { l -> l.split("|", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap(),
+        extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
     )
 
     suspend fun setServerUrl(v: String) = context.dataStore.edit { it[K.server] = v.trim() }
@@ -99,6 +102,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
     suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    suspend fun setExtraPages(v: String) = context.dataStore.edit { it[K.extraPages] = v }
     suspend fun setScrapeStores(v: Set<String>) = context.dataStore.edit { it[K.stores] = v.joinToString(",") }
     suspend fun setScrapeStatus(store: String, text: String) = context.dataStore.edit { p ->
         val cur = (p[K.status] ?: "").split("\n").filter { it.isNotBlank() && !it.startsWith("$store|") }

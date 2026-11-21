@@ -70,4 +70,39 @@ class ScrapersTest {
         val html = """<html><body><form action="/errors/validateCaptcha"><p>Type the characters you see in this image:</p></form></body></html>"""
         assertTrue(AmazonScraper.parse(Jsoup.parse(html, "https://www.amazon.eg/s")) is ScrapeResult.Blocked)
     }
+
+    @Test fun genericNoonLikeCards() {
+        val html = """
+        <div class="grid">
+          <div class="ProductBox_box__1"><a href="/egypt-ar/tefal-air-fryer/N70012345V/p/?o=abc">
+            <img src="https://f.nooncdn.com/p/1.jpg" alt="Tefal Air Fryer 4.2L Black">
+            <div data-qa="product-name" class="ProductDetails_name__x">Tefal Air Fryer 4.2L Black</div>
+            <div class="Price_wrapper"><span class="Price_currency">EGP</span><strong class="Price_amount__a">2,499</strong>
+              <span class="Price_oldPrice__z">3,999</span><span class="Price_discount">37% off</span></div></a></div>
+          <div class="ProductBox_box__1"><a href="/egypt-ar/no-deal/N7009/p/"><img src="https://f.nooncdn.com/p/2.jpg" alt="x">
+            <div data-qa="product-name">Plain product here</div><strong class="Price_amount__a">100</strong></a></div>
+        </div>"""
+        val r = NoonScraper.parse(Jsoup.parse(html, "https://www.noon.com/egypt-ar/search/?q=air")) as ScrapeResult.Ok
+        assertEquals(1, r.items.size)
+        val i = r.items[0]
+        assertTrue(i.id.startsWith("noon:N70012345V-"))
+        assertEquals(2499.0, i.currentPrice, 0.0); assertEquals(3999.0, i.originalPrice, 0.0)
+        assertEquals("Tefal Air Fryer 4.2L Black", i.title)
+        assertEquals("https://www.noon.com/egypt-ar/tefal-air-fryer/N70012345V/p/?o=abc", i.url)
+    }
+
+    @Test fun genericTalabatLikeCards() {
+        val html = """
+        <div class="items">
+          <div class="item"><img src="https://images.deliveryhero.io/a.jpg" alt="Juhayna Milk 1L">
+            <p class="name">Juhayna Milk 1L</p><span class="currency">EGP</span><span class="price">38.50</span>
+            <del>45.00</del><button>Add</button><a href="https://www.talabat.com/egypt/grocery/613174/dokki/dairy">x</a></div>
+        </div>"""
+        val items = CustomPageScraper("https://www.talabat.com/egypt/grocery/613174/dokki/dairy").parse(
+            Jsoup.parse(html, "https://www.talabat.com/egypt/grocery/613174/dokki/dairy")) as ScrapeResult.Ok
+        assertEquals(1, items.items.size)
+        assertEquals(38.5, items.items[0].currentPrice, 0.0)
+        assertEquals(45.0, items.items[0].originalPrice, 0.0)
+        assertTrue(items.items[0].id.startsWith("talabat:"))
+    }
 }

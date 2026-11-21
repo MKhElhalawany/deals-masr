@@ -28,6 +28,7 @@ data class SearchFilters(
 data class PriceDrop(val favorite: FavoriteEntity, val newPrice: Double)
 
 class DealsRepository(
+    context: android.content.Context,
     private val apiProvider: ApiProvider,
     private val settings: SettingsStore,
     private val dealDao: DealDao,
@@ -35,7 +36,7 @@ class DealsRepository(
     private val alertDao: AlertDao,
 ) {
     /** Used when no backend server is configured: reads store pages directly. */
-    val local = LocalDeals(settings, dealDao)
+    val local = LocalDeals(context, settings, dealDao)
     private suspend fun isLocal() = !settings.current().hasServer
 
     val cachedDeals: Flow<List<DealEntity>> = dealDao.observeAll()

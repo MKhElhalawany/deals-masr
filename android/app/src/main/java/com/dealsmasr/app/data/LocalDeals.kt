@@ -10,7 +10,13 @@ import com.dealsmasr.app.data.remote.DealDto
 import com.dealsmasr.app.data.remote.DealPage
 import com.dealsmasr.app.data.remote.MarketplaceDto
 import com.dealsmasr.app.data.remote.PricePointDto
+import android.content.Context
+import com.dealsmasr.app.scrape.CustomPageScraper
 import com.dealsmasr.app.scrape.PageFetcher
+import com.dealsmasr.app.scrape.STORE_NAMES
+import com.dealsmasr.app.scrape.StoreScraper
+import com.dealsmasr.app.scrape.WebFetcher
+import java.io.File
 import com.dealsmasr.app.scrape.SCRAPERS
 import com.dealsmasr.app.scrape.ScrapeResult
 import com.dealsmasr.app.scrape.ScrapedItem
@@ -26,8 +32,8 @@ import java.util.Locale
  * Serverless mode: reads Amazon.eg / Jumia public listing pages directly from the phone.
  * Every price shown is exactly what the store page displayed at [DealEntity.lastChecked].
  */
-class LocalDeals(private val settings: SettingsStore, private val dealDao: DealDao) {
-    private val fetcher = PageFetcher()
+class LocalDeals(private val context: Context, private val settings: SettingsStore, private val dealDao: DealDao) {
+    private val fetcher = PageFetcher(WebFetcher(context))
     private val mutex = Mutex()
     private val timeFmt = DateTimeFormatter.ofPattern("HH:mm", Locale.US)
 
@@ -50,7 +56,7 @@ class LocalDeals(private val settings: SettingsStore, private val dealDao: DealD
             val changed = old == null || old.currentPrice != i.currentPrice || old.originalPrice != i.originalPrice
             if (changed) points += PricePointEntity(i.id, i.currentPrice, i.originalPrice, now)
             DealEntity(
-                id = i.id, marketplace = i.store, marketplaceName = SCRAPERS[i.store]?.nameAr ?: i.store,
+                id = i.id, marketplace = i.store, marketplaceName = STORE_NAMES[i.store] ?: i.store,
                 title = i.title, imageUrl = i.imageUrl ?: old?.imageUrl, url = i.url, category = old?.category,
                 rating = i.rating ?: old?.rating, ratingCount = i.ratingCount ?: old?.ratingCount,
                 originalPrice = i.originalPrice, currentPrice = i.currentPrice, discountPct = pct,
@@ -77,17 +83,20 @@ class LocalDeals(private val settings: SettingsStore, private val dealDao: DealD
             val s = settings.current()
             val kws = s.scrapeKeywords
             val stores = s.scrapeStores.mapNotNull { SCRAPERS[it] }
-            if (kws.isEmpty() || stores.isEmpty()) return@withContext emptyList()
+            val extra = s.extraPages.map { CustomPageScraper(it) }
+            if ((kws.isEmpty() || stores.isEmpty()) && extra.isEmpty()) return@withContext emptyList()
             val n = minOf(keywordsPerRun, kws.size)
-            val start = settings.nextKeywordCursor(n)
+            val start = if (n > 0) settings.nextKeywordCursor(n) else 0L
             val batch = (0 until n).map { kws[((start + it) % kws.size).toInt()] }
             val fresh = mutableListOf<DealDto>()
             val errors = mutableListOf<String>()
             var anyOk = false
-            for (st in stores) {
+            val jobs: List<Pair<StoreScraper, List<String>>> =
+                stores.map { st -> st to batch.map { st.searchUrl(it, 1) } } + extra.map { it to listOf(it.searchUrl("", 1)) }
+            for ((st, urls) in jobs) {
                 var deals = 0; var cards = 0; var problem: String? = null
-                for (kw in batch) {
-                    when (val r = fetcher.fetch(st, st.searchUrl(kw, 1))) {
+                for (url in urls) {
+                    when (val r = fetcher.fetchSmart(st, url)) {
                         is ScrapeResult.Ok -> {
                             cards += r.cardsSeen
                             val saved = save(r.items, s.minDiscount())
@@ -101,7 +110,7 @@ class LocalDeals(private val settings: SettingsStore, private val dealDao: DealD
                 when {
                     problem != null && cards == 0 -> { status(st.id, "⚠️ $problem"); errors += "${st.nameAr}: $problem" }
                     cards == 0 -> { status(st.id, "⚠️ الصفحة اتقرت بس مفيهاش منتجات (ممكن شكل الموقع اتغير)"); errors += "${st.nameAr}: 0 منتجات" }
-                    else -> { anyOk = true; status(st.id, "✓ $deals عرض من $cards منتج (${batch.joinToString("، ")})") }
+                    else -> { anyOk = true; status(st.id, "✓ $deals عرض من $cards منتج" + if (st is CustomPageScraper) " (صفحة مضافة)" else " (${batch.joinToString("، ")})") }
                 }
             }
             dealDao.pruneOlderThan(nowSec() - 48 * 3600)
@@ -122,7 +131,7 @@ class LocalDeals(private val settings: SettingsStore, private val dealDao: DealD
         val errors = mutableListOf<String>()
         var hasMore = false
         for (st in scrapers) {
-            when (val r = fetcher.fetch(st, st.searchUrl(query.trim(), page))) {
+            when (val r = fetcher.fetchSmart(st, st.searchUrl(query.trim(), page))) {
                 is ScrapeResult.Ok -> {
                     if (r.cardsSeen >= 10) hasMore = true
                     results += save(r.items, minD).map { it.first.toDto() }
@@ -160,6 +169,20 @@ class LocalDeals(private val settings: SettingsStore, private val dealDao: DealD
     }
 
     suspend fun cached(ids: List<String>) = dealDao.getAll(ids)
+
+    /** Fetches one page for [store] and saves its raw HTML so the user can share it for troubleshooting. */
+    suspend fun diagnosticPage(store: String): File = withContext(Dispatchers.IO) {
+        val s = settings.current()
+        val scraper = SCRAPERS[store] ?: s.extraPages.map { CustomPageScraper(it) }.firstOrNull { it.id == store }
+            ?: throw IllegalArgumentException(store)
+        val kw = s.scrapeKeywords.firstOrNull() ?: "air fryer"
+        val url = scraper.searchUrl(kw, 1)
+        val r = fetcher.fetchSmart(scraper, url)
+        val dir = File(context.cacheDir, "diag").apply { mkdirs() }
+        File(dir, "$store-page.txt").apply {
+            writeText("URL: $url\nRESULT: $r\n\n" + (fetcher.lastHtml[scraper.id] ?: "(no html)"))
+        }
+    }
 }
 
 private fun AppSettings.minDiscount(): Double = config?.minDiscountPct ?: 10.0

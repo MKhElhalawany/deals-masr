@@ -1,7 +1,9 @@
 package com.dealsmasr.app.ui.settings
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
+import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +29,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,6 +67,23 @@ fun SettingsScreen(onBack: () -> Unit) {
     var keywords by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
     var refreshMsg by remember { mutableStateOf<String?>(null) }
+    var pages by remember { mutableStateOf<String?>(null) }
+    var diagBusy by remember { mutableStateOf<String?>(null) }
+    fun shareDiagnostic(store: String) {
+        if (diagBusy != null) return
+        diagBusy = store
+        scope.launch {
+            runCatching { c.deals.local.diagnosticPage(store) }
+                .onSuccess { f ->
+                    val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
+                    val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    ctx.startActivity(Intent.createChooser(i, "إرسال صفحة التشخيص"))
+                }
+                .onFailure { refreshMsg = it.userMessage() }
+            diagBusy = null
+        }
+    }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         scope.launch { c.settings.setNotifications(granted) }
     }
@@ -87,22 +107,24 @@ fun SettingsScreen(onBack: () -> Unit) {
             if (!st.hasServer) Section("القراءة المباشرة من المواقع") {
                 Text("التطبيق بيقرا صفحات العروض من المواقع كل 10 دقايق وهو مفتوح، وكل 15 دقيقة في الخلفية.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                listOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر").forEach { (id, name) ->
+                listOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر").forEach { (id, name) ->
                     Toggle(name, id in st.scrapeStores) { on ->
                         scope.launch { c.settings.setScrapeStores(if (on) st.scrapeStores + id else st.scrapeStores - id) }
                     }
-                    Text(st.scrapeStatus[id] ?: "لسه ماتقراش", style = MaterialTheme.typography.labelMedium,
-                        color = if ((st.scrapeStatus[id] ?: "").startsWith("✓")) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant)
+                    StoreStatusRow(st.scrapeStatus[id]) { shareDiagnostic(id) }
                 }
-                Text("نون: غير مدعوم حالياً (صفحاته بتتحمّل بالجافاسكريبت).", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (st.scrapeStatus.containsKey("talabat")) StoreStatusRow("طلبات: " + st.scrapeStatus["talabat"]) { shareDiagnostic("talabat") }
+                OutlinedTextField(pages ?: st.extraPages.joinToString("\n"), { pages = it }, Modifier.fillMaxWidth(),
+                    label = { Text("صفحات عروض إضافية (لينك في كل سطر)") },
+                    supportingText = { Text("مثلاً صفحة طلبات مارت لمنطقتك أو صفحة عروض من أي موقع — افتحها في كروم وانسخ اللينك") },
+                    minLines = 2, maxLines = 5)
                 OutlinedTextField(keywords ?: st.scrapeKeywords.joinToString("\n"), { keywords = it }, Modifier.fillMaxWidth(),
                     label = { Text("كلمات البحث عن العروض (كلمة في كل سطر)") }, minLines = 4, maxLines = 8)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(enabled = !refreshing, onClick = {
                         scope.launch {
                             keywords?.let { c.settings.setScrapeKeywords(it) }
+                            pages?.let { c.settings.setExtraPages(it) }
                             refreshing = true
                             refreshMsg = runCatching { c.deals.refresh() }
                                 .fold({ "تم ✓ — ${it.size} عرض جديد" }, { it.userMessage() })
@@ -166,6 +188,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                 Text("القيم بتتحدد من لوحة التحكم.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
+    }
+}
+
+@Composable
+private fun StoreStatusRow(status: String?, onShare: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(status ?: "لسه ماتقراش", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+            color = if ((status ?: "").contains("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = onShare) { Text("تشخيص") }
     }
 }
 
