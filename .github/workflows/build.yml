@@ -1,17 +1,54 @@
 name: build
 
+# Zero-maintenance pipeline:
+#  • push / manual run       → test, provision Supabase, build + publish the APK
+#  • every 15 minutes        → does nothing unless the SUPABASE_ACCESS_TOKEN secret exists AND the newest commit
+#                              has no connected APK yet (this is how setup starts by itself after the secret is added)
+#  • results                 → GitHub issues (GitHub e-mails the repo owner): "📱 آخر نسخة" with the APK link,
+#                              or "⚠️ التحديث التلقائي واقف" with the reason in plain words.
 on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
 
-# never provision twice in parallel
 concurrency:
-  group: build-${{ github.ref }}
+  group: pipeline-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  issues: write
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.p.outputs.go }}
+    steps:
+      - id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          go=false
+          if [ "$HAS_TOKEN" = "true" ]; then
+            latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)
+            if ! echo "$latest" | grep -q "connected:$GITHUB_SHA"; then
+              # don't hammer a failing setup: retry at most once an hour
+              recent=$(gh issue list --repo "$GITHUB_REPOSITORY" --label pipeline-failure --state open --json updatedAt \
+                -q '[.[] | select((now - (.updatedAt | fromdateiso8601)) < 3300)] | length' 2>/dev/null || echo 0)
+              [ "${recent:-0}" = "0" ] && go=true
+            fi
+          fi
+          echo "go=$go" >> "$GITHUB_OUTPUT"
+          echo "scheduled check → go=$go"
+
   backend:
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: backend } }
     steps:
@@ -22,18 +59,20 @@ jobs:
       - run: python -m pytest -q
 
   supabase-sql:
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply migrations to a throwaway Postgres and run RLS tests
+      - name: Migrations + RLS/security tests on a throwaway Postgres
         run: |
           sudo systemctl start postgresql
           sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql
           for f in supabase/migrations/*.sql; do sudo -u postgres psql -v ON_ERROR_STOP=1 -f "$f"; done
           sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/rls_test.sql
 
-  # Creates/updates the Supabase project, applies migrations, runs live security tests, outputs URL + publishable key.
-  # Only needs the SUPABASE_ACCESS_TOKEN repository secret (optional ADMIN_EMAIL). Secret keys never leave Supabase.
+  # Creates/updates the Supabase project, applies migrations, live security gates, owner setup.
+  # Needs only the SUPABASE_ACCESS_TOKEN secret. Outputs public values only (URL + publishable key).
   supabase:
     needs: supabase-sql
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -41,6 +80,9 @@ jobs:
     outputs:
       url: ${{ steps.setup.outputs.url }}
       key: ${{ steps.setup.outputs.key }}
+      owner: ${{ steps.setup.outputs.owner }}
+      admin_ready: ${{ steps.setup.outputs.admin_ready }}
+      error: ${{ steps.setup.outputs.error }}
     steps:
       - uses: actions/checkout@v4
       - id: setup
@@ -50,11 +92,12 @@ jobs:
         run: python3 tools/supabase_setup.py
 
   android:
-    needs: supabase
-    if: always() && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
+    needs: [backend, supabase]
+    if: always() && needs.backend.result == 'success' && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    outputs:
+      apk: ${{ steps.publish.outputs.apk }}
+      connected: ${{ steps.publish.outputs.connected }}
     defaults: { run: { working-directory: android } }
     steps:
       - uses: actions/checkout@v4
@@ -64,28 +107,47 @@ jobs:
       - run: chmod +x gradlew
       - name: Unit tests
         run: ./gradlew --no-daemon testDebugUnitTest
-      - name: Build debug APK
+      - name: Build APK
         env:
           SUPABASE_URL: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ needs.supabase.outputs.key || vars.SUPABASE_ANON_KEY }}
         run: ./gradlew --no-daemon assembleDebug -PapiBaseUrl="${{ vars.API_BASE_URL }}"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: deals-masr-debug-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-      - name: Publish APK as GitHub release (main branch only)
-        if: github.ref == 'refs/heads/main'
+      - name: Publish APK (main only)
+        id: publish
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           CONNECTED: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk DealsMasr.apk
-          TAG="build-${{ github.run_number }}"
+          TAG="build-${{ github.run_number }}-${{ github.run_attempt }}"
           if [ -n "$CONNECTED" ]; then
-            gh release create "$TAG" DealsMasr.apk --title "Deals Masr build ${{ github.run_number }}" \
-              --notes "Debug APK connected to Supabase, built from ${{ github.sha }}" --latest
+            gh release create "$TAG" DealsMasr.apk --title "عروض مصر — نسخة ${{ github.run_number }}" \
+              --notes "connected:${{ github.sha }}" --latest
+            echo "connected=yes" >> "$GITHUB_OUTPUT"
           else
-            # not connected to Supabase: publish as pre-release so "latest" keeps pointing at a working APK
-            gh release create "$TAG" DealsMasr.apk --title "Deals Masr build ${{ github.run_number }} (no backend)" \
-              --notes "Built without Supabase (SUPABASE_ACCESS_TOKEN secret missing)." --prerelease --latest=false
+            gh release create "$TAG" DealsMasr.apk --title "Build ${{ github.run_number }} (no backend)" \
+              --notes "Built without Supabase (SUPABASE_ACCESS_TOKEN secret not added yet)." --prerelease --latest=false
+            echo "connected=no" >> "$GITHUB_OUTPUT"
           fi
+          echo "apk=https://github.com/${{ github.repository }}/releases/download/$TAG/DealsMasr.apk" >> "$GITHUB_OUTPUT"
+
+  report:
+    needs: [plan, backend, supabase-sql, supabase, android]
+    if: always() && needs.plan.outputs.go == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          R_BACKEND: ${{ needs.backend.result }}
+          R_SQL: ${{ needs.supabase-sql.result }}
+          R_SUPABASE: ${{ needs.supabase.result }}
+          R_ANDROID: ${{ needs.android.result }}
+          SUPABASE_ERROR: ${{ needs.supabase.outputs.error }}
+          APK: ${{ needs.android.outputs.apk }}
+          CONNECTED: ${{ needs.android.outputs.connected }}
+          OWNER: ${{ needs.supabase.outputs.owner }}
+          ADMIN_READY: ${{ needs.supabase.outputs.admin_ready }}
+        run: python3 tools/pipeline_report.py

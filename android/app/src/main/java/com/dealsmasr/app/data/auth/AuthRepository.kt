@@ -122,6 +122,16 @@ class AuthRepository(
 
     suspend fun resetPassword(email: String) = supabase.resetPassword(email.trim())
 
+    suspend fun sendOwnerCode(email: String) = supabase.sendOtp(email.trim())
+
+    /** Code login; grants admin only if this is the owner's e-mail (checked by the database). */
+    suspend fun ownerSignIn(email: String, code: String): Boolean {
+        supabase.verifyOtp(email.trim(), code.trim())
+        val isOwner = runCatching { supabase.rpc("claim_owner").trim() == "true" }.getOrDefault(false)
+        afterLogin()
+        return isOwner
+    }
+
     suspend fun signOut() {
         supabase.signOut()
         settings.setAdminMode(false)

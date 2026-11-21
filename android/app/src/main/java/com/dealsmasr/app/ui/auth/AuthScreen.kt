@@ -52,7 +52,7 @@ import com.dealsmasr.app.ui.appContainer
 import com.dealsmasr.app.ui.theme.Brand
 import kotlinx.coroutines.launch
 
-private enum class Mode { LOGIN, SIGNUP, RESET }
+private enum class Mode { LOGIN, SIGNUP, RESET, OWNER }
 
 private val EMAIL = Regex("""^[^\s@]+@[^\s@]+\.[^\s@]{2,}$""")
 private val EG_PHONE = Regex("""^(\+?20|0)?1[0125]\d{8}$""")
@@ -71,12 +71,15 @@ fun AuthScreen(notConfigured: Boolean) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var info by remember { mutableStateOf<String?>(null) }
+    var code by remember { mutableStateOf("") }
+    var codeSent by rememberSaveable { mutableStateOf(false) }
 
     val emailOk = EMAIL.matches(email.trim())
     val canSubmit = !busy && !notConfigured && emailOk && when (mode) {
         Mode.LOGIN -> password.isNotEmpty()
         Mode.SIGNUP -> password.length >= 6 && name.trim().length >= 2 && EG_PHONE.matches(phone.replace(" ", ""))
         Mode.RESET -> true
+        Mode.OWNER -> !codeSent || code.length == 6
     }
 
     fun submit() {
@@ -90,6 +93,12 @@ fun AuthScreen(notConfigured: Boolean) {
                         mode = Mode.LOGIN
                     }
                     Mode.RESET -> { auth.resetPassword(email); info = "لو الإيميل متسجل، هتوصلك رسالة لتغيير كلمة السر."; mode = Mode.LOGIN }
+                    Mode.OWNER -> if (!codeSent) {
+                        auth.sendOwnerCode(email); codeSent = true; info = "بعتنا كود من 6 أرقام على $email"
+                    } else {
+                        // on success the app opens automatically (signed-in state)
+                        if (!auth.ownerSignIn(email, code)) info = "دخلت كمستخدم عادي — الإيميل ده مش إيميل صاحب المتجر"
+                    }
                 }
                 Unit
             }.onFailure { error = it.message ?: "حصل خطأ" }
@@ -117,7 +126,7 @@ fun AuthScreen(notConfigured: Boolean) {
                 AnimatedContent(mode, label = "mode") { m ->
                     Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                         Text(
-                            when (m) { Mode.LOGIN -> "تسجيل الدخول"; Mode.SIGNUP -> "حساب جديد"; Mode.RESET -> "نسيت كلمة السر" },
+                            when (m) { Mode.LOGIN -> "تسجيل الدخول"; Mode.SIGNUP -> "حساب جديد"; Mode.RESET -> "نسيت كلمة السر"; Mode.OWNER -> "دخول صاحب المتجر" },
                             style = MaterialTheme.typography.titleLarge,
                         )
                         if (notConfigured) {
@@ -134,7 +143,12 @@ fun AuthScreen(notConfigured: Boolean) {
                         OutlinedTextField(email, { email = it.trim() }, Modifier.fillMaxWidth(), label = { Text("الإيميل") }, singleLine = true,
                             isError = email.isNotEmpty() && !emailOk,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next))
-                        if (m != Mode.RESET) {
+                        if (m == Mode.OWNER && codeSent) {
+                            OutlinedTextField(code, { code = it.filter(Char::isDigit).take(6) }, Modifier.fillMaxWidth(),
+                                label = { Text("الكود اللي وصلك على الإيميل") }, singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Done))
+                        }
+                        if (m == Mode.LOGIN || m == Mode.SIGNUP) {
                             OutlinedTextField(password, { password = it }, Modifier.fillMaxWidth(), label = { Text("كلمة السر") }, singleLine = true,
                                 visualTransformation = if (showPass) VisualTransformation.None else PasswordVisualTransformation(),
                                 supportingText = { if (m == Mode.SIGNUP) Text("6 حروف على الأقل") },
@@ -149,7 +163,10 @@ fun AuthScreen(notConfigured: Boolean) {
                         info?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
                         Button(onClick = { submit() }, enabled = canSubmit, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                             if (busy) CircularProgressIndicator(Modifier.size(22.dp), color = Color.White, strokeWidth = 2.dp)
-                            else Text(when (m) { Mode.LOGIN -> "دخول"; Mode.SIGNUP -> "إنشاء الحساب"; Mode.RESET -> "ابعت لينك التغيير" })
+                            else Text(when (m) {
+                                Mode.LOGIN -> "دخول"; Mode.SIGNUP -> "إنشاء الحساب"; Mode.RESET -> "ابعت لينك التغيير"
+                                Mode.OWNER -> if (codeSent) "تأكيد الكود" else "ابعت الكود"
+                            })
                         }
                         Spacer(Modifier.height(2.dp))
                         when (m) {
@@ -160,8 +177,11 @@ fun AuthScreen(notConfigured: Boolean) {
                                 TextButton(onClick = { mode = Mode.RESET; error = null; info = null }, Modifier.fillMaxWidth()) {
                                     Text("نسيت كلمة السر؟")
                                 }
+                                TextButton(onClick = { mode = Mode.OWNER; codeSent = false; code = ""; error = null; info = null }, Modifier.fillMaxWidth()) {
+                                    Text("صاحب المتجر؟ ادخل بكود على الإيميل", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
-                            else -> TextButton(onClick = { mode = Mode.LOGIN; error = null }, Modifier.fillMaxWidth()) {
+                            else -> TextButton(onClick = { mode = Mode.LOGIN; codeSent = false; error = null }, Modifier.fillMaxWidth()) {
                                 Text("عندك حساب؟ سجّل دخول")
                             }
                         }

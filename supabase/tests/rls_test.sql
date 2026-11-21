@@ -63,5 +63,25 @@ select pg_temp.check((select confirmed_at is not null from public.orders where i
 insert into public.deals (id, store_id, title, url, original_price, current_price) values ('amazon:RLSTEST', 'amazon', 't', 'https://x', 200, 50);
 select pg_temp.check((select discount_pct from public.deals where id = 'amazon:RLSTEST') = 75.0, 'generated discount');
 reset role;
+
+-- owner bootstrap: only the configured e-mail, only after a one-time-code login
+insert into app_private.settings (key, value) values ('owner_email', 'rls-b@example.com')
+  on conflict (key) do update set value = excluded.value;
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'b2222222-2222-4222-8222-222222222222', false);
+select set_config('request.jwt.claims', '{"amr":[{"method":"password","timestamp":1}]}', false);
+select pg_temp.check(not public.claim_owner(), 'owner e-mail with password login must NOT become admin');
+select set_config('request.jwt.claim.sub', 'a1111111-1111-4111-8111-111111111111', false);
+select set_config('request.jwt.claims', '{"amr":[{"method":"otp","timestamp":1}]}', false);
+select pg_temp.check(not public.claim_owner(), 'other e-mail with code login must NOT become admin');
+select pg_temp.must_fail($$select * from app_private.settings$$);
+select set_config('request.jwt.claim.sub', 'b2222222-2222-4222-8222-222222222222', false);
+select pg_temp.check(public.claim_owner(), 'owner e-mail with code login becomes admin');
+select pg_temp.check(public.is_admin(), 'owner is admin now');
+reset role;
+set role anon;
+select pg_temp.must_fail($$select public.claim_owner()$$);
+reset role;
 select set_config('request.jwt.claim.sub', '', false);
+select set_config('request.jwt.claims', '', false);
 select 'ALL RLS TESTS PASSED';

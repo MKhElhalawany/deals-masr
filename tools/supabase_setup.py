@@ -30,8 +30,21 @@ def log(msg):
     print(msg, flush=True)
 
 
+def report(key, value):
+    out = os.environ.get("GITHUB_OUTPUT")
+    if out:
+        with open(out, "a") as f:
+            f.write(f"{key}={value}\n")
+
+
 def fail(msg):
+    """Stop with a plain-language reason (shown in the run summary and the failure issue)."""
     print(f"::error::{msg}", flush=True)
+    report("error", msg.replace("\n", " ")[:600])
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a") as f:
+            f.write(f"### ❌ Supabase setup failed\n\n{msg}\n")
     sys.exit(1)
 
 
@@ -59,6 +72,9 @@ def http(method, url, body=None, headers=None, ok=(200, 201, 204), retries=5):
 
 def api(method, path, body=None):
     status, res = http(method, API + path, body, {"Authorization": f"Bearer {TOKEN}"})
+    if status in (401, 403) and path in ("/organizations", "/projects"):
+        fail("The SUPABASE_ACCESS_TOKEN secret is invalid or expired. Create a new token at "
+             "https://supabase.com/dashboard/account/tokens and replace the GitHub secret.")
     if status >= 400:
         fail(f"Management API {method} {path} → {status}: {str(res)[:300]}")
     return res
@@ -70,6 +86,13 @@ def sql(ref, query):
     if status >= 400:
         raise RuntimeError(f"SQL failed ({status}): {str(res)[:500]}")
     return res
+
+
+def guarded(fn, what):
+    try:
+        return fn()
+    except RuntimeError as e:
+        fail(f"{what}: {e}")
 
 
 def org_slug():
@@ -115,14 +138,54 @@ def wait_healthy(ref):
     fail("Project did not become healthy in time — rerun the workflow in a few minutes.")
 
 
+OTP_EMAIL = """<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;font-size:16px">
+<p>كود الدخول لتطبيق <b>عروض مصر</b>:</p>
+<p style="font-size:32px;letter-spacing:6px"><b>{{ .Token }}</b></p>
+<p>لو مش انت اللي طلبته تجاهل الرسالة.</p></div>"""
+
+
 def configure_auth(ref):
     api("PATCH", f"/projects/{ref}/config/auth", {
         "external_email_enabled": True,
         "mailer_autoconfirm": True,          # testing: sign-up logs in immediately (turn off before launch)
         "password_min_length": 6,
         "disable_signup": False,
+        "mailer_otp_length": 6,
+        "mailer_otp_exp": 600,
+        "mailer_subjects_magic_link": "كود الدخول — عروض مصر",
+        "mailer_templates_magic_link_content": OTP_EMAIL,   # owner login code
     })
-    log("Auth configured ✓ (email+password, auto-confirm for testing)")
+    log("Auth configured ✓ (email+password, auto-confirm for testing, 6-digit owner login code)")
+
+
+def owner_email():
+    """The Supabase account owner's e-mail (or ADMIN_EMAIL if set) becomes the app owner."""
+    if ADMIN_EMAIL:
+        return ADMIN_EMAIL
+    status, prof = http("GET", f"{API}/profile", headers={"Authorization": f"Bearer {TOKEN}"})
+    if status < 400 and isinstance(prof, dict):
+        return (prof.get("primary_email") or prof.get("email") or "").strip()
+    return ""
+
+
+def masked(e):
+    name, _, dom = e.partition("@")
+    return (name[:2] + "***@" + dom) if dom else "***"
+
+
+def set_owner(ref):
+    email = owner_email()
+    if not email or "@" not in email:
+        log("::warning::Could not detect the owner e-mail. Add a repository secret ADMIN_EMAIL to enable the admin login.")
+        report("owner", "")
+        return
+    safe = email.replace("'", "''")
+    sql(ref, f"insert into app_private.settings(key, value) values ('owner_email', '{safe}') "
+             f"on conflict (key) do update set value = excluded.value;")
+    admins = sql(ref, "select count(*) as n from public.profiles where role = 'admin'")
+    report("owner", masked(email))
+    report("admin_ready", "yes" if admins and int(admins[0]["n"]) > 0 else "no")
+    log(f"Owner e-mail set ✓ ({masked(email)}) — admin is granted when this e-mail logs in with its e-mail code")
 
 
 def apply_migrations(ref):
@@ -224,8 +287,8 @@ def main():
     ref = project(org_slug())
     wait_healthy(ref)
     configure_auth(ref)
-    apply_migrations(ref)
-    security_checks(ref)
+    guarded(lambda: apply_migrations(ref), "Applying database migrations failed")
+    guarded(lambda: security_checks(ref), "Security checks could not run")
     url = f"https://{ref}.supabase.co"
     key = publishable_key(ref)
     smoke_email = None
@@ -239,15 +302,9 @@ def main():
             fail(f"Could not reach the project's API for the smoke test ({type(e).__name__}: {e}). Rerun the workflow in a few minutes.")
     if smoke_email:
         sql(ref, f"delete from auth.users where email = '{smoke_email}';")
-    if ADMIN_EMAIL:
-        safe = ADMIN_EMAIL.replace("'", "''")
-        n = sql(ref, f"with u as (update public.profiles p set role = 'admin' from auth.users a "
-                     f"where a.id = p.id and lower(a.email) = lower('{safe}') returning p.id) select count(*) as n from u")
-        log("Admin role ✓" if n and int(n[0]["n"]) > 0 else "::notice::ADMIN_EMAIL has no account yet — sign up in the app, it's granted on the next run.")
-    out = os.environ.get("GITHUB_OUTPUT")
-    if out:
-        with open(out, "a") as f:
-            f.write(f"url={url}\nkey={key}\n")  # public values only
+    set_owner(ref)
+    report("url", url)
+    report("key", key)  # publishable key only (public by design)
     log(f"Supabase ready ✓ project {ref}")
 
 

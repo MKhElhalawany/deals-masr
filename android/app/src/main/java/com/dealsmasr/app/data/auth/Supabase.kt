@@ -118,6 +118,7 @@ class Supabase(private val store: SessionStore, private val json: Json) {
         val raw = listOf("msg", "error_description", "message", "error").firstNotNullOfOrNull { o?.get(it)?.jsonPrimitive?.content }.orEmpty()
         return when {
             raw.contains("Invalid login credentials", true) -> "الإيميل أو كلمة السر غلط"
+            raw.contains("expired", true) || raw.contains("invalid", true) && raw.contains("otp", true) -> "الكود غلط أو انتهى — اطلب كود جديد"
             raw.contains("already registered", true) || raw.contains("already exists", true) -> "الإيميل ده متسجل قبل كده — سجّل دخول"
             raw.contains("Email not confirmed", true) -> "أكد إيميلك الأول من الرسالة اللي وصلتك"
             raw.contains("Password should", true) || raw.contains("weak", true) -> "كلمة السر ضعيفة — 6 حروف على الأقل"
@@ -156,6 +157,19 @@ class Supabase(private val store: SessionStore, private val json: Json) {
         setSession(parseSession(call("POST", "/auth/v1/token?grant_type=password", body.toString(), null))
             ?: throw SupabaseException(0, "رد غير متوقع من الخادم"))
     }
+
+    /** Sends a 6-digit login code to [email] (creates the user if needed). */
+    suspend fun sendOtp(email: String) {
+        call("POST", "/auth/v1/otp", buildJsonObject { put("email", email); put("create_user", true) }.toString(), null)
+    }
+
+    suspend fun verifyOtp(email: String, code: String) {
+        val body = buildJsonObject { put("type", "email"); put("email", email); put("token", code) }
+        setSession(parseSession(call("POST", "/auth/v1/verify", body.toString(), null))
+            ?: throw SupabaseException(0, "الكود غلط أو انتهى"))
+    }
+
+    suspend fun rpc(fn: String): String = call("POST", "/rest/v1/rpc/$fn", "{}", token())
 
     suspend fun resetPassword(email: String) {
         call("POST", "/auth/v1/recover", buildJsonObject { put("email", email) }.toString(), null)
