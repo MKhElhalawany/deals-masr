@@ -129,6 +129,13 @@ create trigger call_scan after insert or update of status on public.orders for e
         S.sql(ref, "update public.scan_targets set next_run_at = now(), fingerprint = null where store = 'townteam'")
         S.sql(ref, "insert into app_config (key, value) values ('cleanup_v1', 'true')")
         print(f"cleanup: hid {fixed[0]['n']} misread deals (Town Team layout prices, >90%)")
+    # one-time data fix 2: noon deals read from page layout (ids "noon:<sku>-<hash>") had wrong prices → hide them
+    if not S.sql(ref, "select 1 from app_config where key = 'cleanup_v2'"):
+        fixed = S.sql(ref, "with x as (update public.deals set active = false, updated_at = now() where active and store_id = 'noon' "
+                           "and id ~ '^noon:.+-[0-9a-f]{1,8}$' returning 1) select count(*) as n from x")
+        S.sql(ref, "update public.scan_targets set fingerprint = null where store = 'noon'")
+        S.sql(ref, "insert into app_config (key, value) values ('cleanup_v2', 'true')")
+        print(f"cleanup v2: hid {fixed[0]['n']} noon deals with layout-read prices")
     qstat = S.sql(ref, "select store, count(*) as n from public.scan_targets group by store order by store") or []
     print("scan targets:", ", ".join(f"{r['store']} {r['n']}" for r in qstat))
 

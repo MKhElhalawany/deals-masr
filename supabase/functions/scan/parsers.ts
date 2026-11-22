@@ -114,15 +114,15 @@ const noonId = (url: string) => {
 
 export function parseNoon(html: string): [Item[], number] {
   if (html.slice(0, 5000).includes("Access Denied") && !html.includes("/p/")) throw new Blocked("noon blocked");
-  const d = doc(html);
-  const cards = d.querySelectorAll("a[href*='/p/']").length;
-  const items = generic(html, "noon", "https://www.noon.com/", noonId, d);
-  if (!items.length) items.push(...noonJson(html));
+  // Prices ONLY from noon's embedded product data (price / sale_price). The layout-based detector misread
+  // ranks and model numbers ("#18", "10K") as prices, so it is no longer used for noon.
+  const items = noonJson(html);
+  const cards = (html.match(/"sale_price"/g) ?? []).length || (html.match(/href="[^"]*\/p\//g) ?? []).length;
   return [items, Math.max(cards, items.length)];
 }
 
 /** Products embedded as JSON (Next.js data): objects with sku + name + price + sale_price. */
-function noonJson(html: string): Item[] {
+export function noonJson(html: string): Item[] {
   const out = new Map<string, Item>();
   const re = /\{[^{}]*?"sku"\s*:\s*"([A-Z0-9]{6,})"[^{}]*?\}/g;
   for (const m of html.replace(/\\"/g, '"').matchAll(re)) {

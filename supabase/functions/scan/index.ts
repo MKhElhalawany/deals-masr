@@ -358,8 +358,10 @@ Deno.serve(async (req) => {
       const spec = STORES[String(body.store)];
       const [code, html] = await fetchPage(spec.deals[0] ?? spec.search?.("headphones") ?? "");
       const marks = [...html.matchAll(/data-component-type="s-search-result"|<article class="prd|href="[^"]*\/p\//g)].map((m) => m.index!);
-      if (String(body.store) === "noon" && marks.length) {   // image diagnosis: markup around the first product link
-        out = { code, length: html.length, sample: html.slice(Math.max(0, marks[0] - 1500), marks[0] + 2500) };
+      if (String(body.store) === "noon") {   // noon product data: what surrounds the first two "sale_price" fields
+        const t = html.replace(/\\"/g, '"');
+        const idx = [...t.matchAll(/"sale_price"/g)].map((m) => m.index!).slice(0, 2);
+        out = { code, length: html.length, sample: idx.map((i) => t.slice(Math.max(0, i - 2500), i + 1200)).join("\n=====\n") };
         return Response.json(out);
       }
       const card = marks.length > 2 ? html.slice(marks[1], marks[2]) : html.slice(0, 60000);

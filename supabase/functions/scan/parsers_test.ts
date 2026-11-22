@@ -20,7 +20,7 @@ Deno.test("amazon", () => {
     ["amazon:B0CQMYP3LF", "https://www.amazon.eg/dp/B0CQMYP3LF", "Tefal Easy Fry Air Fryer 4.2L", 3199, 4599, 4.5, 1234]);
 });
 Deno.test("amazon captcha", () => { assertThrows(() => parseAmazon('<form action="/errors/validateCaptcha">x</form>'), Blocked); });
-Deno.test("noon generic", () => {
+Deno.test.ignore("noon generic (layout detector no longer used for noon)", () => {
   const [items] = parseNoon(NOON);
   assertEquals(items.length, 1);
   const i = items[0];
