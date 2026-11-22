@@ -358,12 +358,14 @@ Deno.serve(async (req) => {
       const spec = STORES[String(body.store)];
       const [code, html] = await fetchPage(spec.deals[0] ?? spec.search?.("headphones") ?? "");
       const marks = [...html.matchAll(/data-component-type="s-search-result"|<article class="prd|href="[^"]*\/p\//g)].map((m) => m.index!);
-      if (String(body.store) === "noon") {   // noon product data: what surrounds the first two "sale_price" fields
-        const t = html.replace(/\\+"/g, '"');
-        const idx = [...t.matchAll(/sale_price/g)].map((m) => m.index!).slice(0, 2);
-        const title = html.match(/<title[^>]*>([^<]{0,160})/i)?.[1] ?? "";
-        out = { code, length: html.length, sample: idx.length ? idx.map((i) => t.slice(Math.max(0, i - 2500), i + 1200)).join("\n=====\n")
-          : `NO sale_price · title="${title}" · /p/ links=${(html.match(/\/p\//g) ?? []).length} · price words=${(html.match(/EGP|ج\.م/g) ?? []).length} · scripts=${(html.match(/<script/g) ?? []).length}\n` + html.slice(html.indexOf("<body"), html.indexOf("<body") + 3000) };
+      if (String(body.store) === "noon") {   // noon product data: scalar fields of the first hits (prices, offers)
+        const starts = [...html.matchAll(/[{,]\s*"?offer_code"?\s*:/g)].map((m) => m.index!);
+        const hits = starts.slice(0, 4).map((st, i) => {
+          const chunk = html.slice(st, Math.min(starts[i + 1] ?? html.length, st + 8000));
+          return [...chunk.matchAll(/[{,]\s*"?([a-z_A-Z]+)"?\s*:\s*("(?:[^"\\]|\\.){0,80}"|-?[0-9.]+|!0|!1|null)/g)]
+            .filter((m) => !/image|url|key|spec|name|slug/i.test(m[1])).map((m) => `${m[1]}=${m[2]}`).join(" ");
+        });
+        out = { code, length: html.length, sample: hits.join("\n=====\n") };
         return Response.json(out);
       }
       const card = marks.length > 2 ? html.slice(marks[1], marks[2]) : html.slice(0, 60000);

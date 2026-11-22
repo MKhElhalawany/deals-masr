@@ -220,6 +220,17 @@ create trigger call_scan after insert or update of status on public.orders for e
             OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
     except Exception as e:
         OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
+    dq = os.path.join(os.path.dirname(__file__), "diag_queries.sql")
+    if os.path.exists(dq):
+        print("::group::diagnostic queries (read-only)")
+        for line in open(dq):
+            line = line.strip()
+            if line.lower().startswith("select"):
+                try:
+                    print(">>", line[:120]); print(json.dumps(S.sql(ref, line), ensure_ascii=False, default=str)[:4000])
+                except Exception as e:
+                    print("!!", e)
+        print("::endgroup::")
     text = "\n".join(OUT)
     print(text)
     out("report", text)
