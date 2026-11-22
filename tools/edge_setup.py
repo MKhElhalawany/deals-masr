@@ -134,7 +134,7 @@ create trigger call_scan after insert or update of status on public.orders for e
     for s in diag:   # page refused / read without deals → print what the store returned (product HTML only) for diagnosis
         try:
             d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json={"job": "debug", "store": s}).json()
-            print(f"::group::{s} sample (HTTP {d.get('code')}, {d.get('length')} bytes)\n{d.get('sample', '')}\n::endgroup::")
+            print(f"::group::{s} sample (HTTP {d.get('code')}, {d.get('length')} bytes) {d.get('error') or d.get('skipped') or ''}\n{d.get('sample', '')}\n::endgroup::")
         except Exception as e:
             print(f"debug {s} failed: {e}")
     OUT.append(f"\nمتاجر شغالة فعلاً من سيرفر Supabase: **{working}/{len(STORES)}**. "
