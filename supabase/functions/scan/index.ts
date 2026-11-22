@@ -210,6 +210,41 @@ async function runOrder(id: string) {
   return { ok: true };
 }
 
+// ───────── one-time store probe (Phase 0): ONE plain request per call, allowlisted hosts only, no retries,
+// no cookies, no challenge solving. Returns what the page offers, not the page.
+const PROBE_HOSTS = ["www.amazon.eg", "www.noon.com", "www.jumia.com.eg", "www.defacto.com", "defacto.com", "www.lcwaikiki.eg",
+  "lcwaikiki.eg", "townteam.com", "www.townteam.com", "www.townteam.com.eg", "townteam.com.eg"];
+async function probe(url: string) {
+  const u = new URL(url);
+  if (!PROBE_HOSTS.includes(u.hostname)) return { error: "host not allowed" };
+  const t0 = Date.now();
+  let r: Response;
+  try {
+    r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000), headers: {
+      "User-Agent": UAS[0], "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8", "Accept-Language": "en-US,en;q=0.8,ar;q=0.7" } });
+  } catch (e) { return { url, error: String(e).slice(0, 200), ms: Date.now() - t0 }; }
+  const html = await r.text();
+  const ms = Date.now() - t0;
+  const count = (re: RegExp) => (html.match(re) ?? []).length;
+  const base = { url, final: r.url, status: r.status, bytes: html.length, ms, contentType: r.headers.get("content-type") ?? "",
+    title: (html.match(/<title[^>]*>([^<]{0,140})/i)?.[1] ?? "").trim(),
+    challenge: /Just a moment|cf-chl|challenges\.cloudflare|captcha|Attention Required|Access Denied|validateCaptcha|px-captcha|perimeterx/i.test(html.slice(0, 20000)) };
+  if (u.pathname.endsWith("robots.txt")) return { ...base, robots: html.slice(0, 4000) };
+  if (u.pathname.endsWith(".xml") || html.trimStart().startsWith("<?xml")) {
+    const locs = [...html.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+    return { ...base, sitemapEntries: locs.length, sitemapSample: locs.slice(0, 15) };
+  }
+  const links = [...new Set([...html.matchAll(/href="(\/[^"#?]{2,120})"/g)].map((m) => m[1]))];
+  const dropdown = [...html.matchAll(/<option[^>]*value="search-alias=([a-z0-9-]+)"/gi)].map((m) => m[1]);
+  return { ...base,
+    markers: { amazonCards: count(/data-component-type="s-search-result"/g), amazonStrike: count(/a-text-price/g),
+      noonProductLinks: count(/href="[^"]*\/p\//g), noonSalePrice: count(/sale_price/g), jumiaCards: count(/<article class="prd/g),
+      jsonLdProduct: count(/"@type"\s*:\s*"Product"/g), strikeTags: count(/<(del|s)\b|line-through|class="[^"]*(old|was|strike)[^"]*"/gi),
+      priceWords: count(/(EGP|ج\.م|جنيه)/g), nextData: html.includes("__NEXT_DATA__") || html.includes("self.__next_f") },
+    amazonDepartments: dropdown.length, amazonDepartmentSample: dropdown.slice(0, 60),
+    linkCount: links.length, linkSample: links.filter((l) => !/\.(js|css|png|jpg|svg|ico|woff)/.test(l)).slice(0, 40) };
+}
+
 function sameSecret(a: string, b: string) {
   if (!a || a.length !== b.length) return false;
   let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -221,7 +256,8 @@ Deno.serve(async (req) => {
   const body = await req.json().catch(() => ({}));
   try {
     let out: unknown;
-    if (body.job === "order") out = await runOrder(String(body.id));   // pushes: needed even when the VM worker runs
+    if (body.job === "order") out = await runOrder(String(body.id));
+    else if (body.job === "probe") out = await probe(String(body.url));   // pushes: needed even when the VM worker runs
     else if (await vmAlive()) out = { skipped: "vm worker active" };
     else if (body.job === "scan") {
       out = await scanStore(String(body.store));

@@ -49,6 +49,17 @@ class RealtimeClient(private val supabase: Supabase, private val json: Json, pri
     private var loop: Job? = null
     private var lastToken: String? = null
     @Volatile private var wanted = false
+    /** Only deal changes at or above this discount are pushed to the phone (smaller ones arrive with the periodic catch-up). */
+    @Volatile var minPct: Int = 10
+        private set
+
+    /** Changes the deal filter; reconnects only if it actually changed. */
+    fun setMinPct(v: Int) {
+        val n = v.coerceIn(10, 95)
+        if (n == minPct) return
+        minPct = n
+        if (wanted) { stop(); start() }
+    }
 
     private val _connected = MutableStateFlow(false)
     /** true once the channel is joined and Postgres changes are flowing. */
@@ -95,7 +106,8 @@ class RealtimeClient(private val supabase: Supabase, private val json: Json, pri
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 val changes = buildJsonArray {
-                    listOf("deals" to "*", "user_notifications" to "INSERT", "orders" to "*", "shein_quotes" to "UPDATE").forEach { (t, e) ->
+                    add(buildJsonObject { put("event", "*"); put("schema", "public"); put("table", "deals"); put("filter", "discount_pct=gte.$minPct") })
+                    listOf("user_notifications" to "INSERT", "orders" to "*", "shein_quotes" to "UPDATE").forEach { (t, e) ->
                         add(buildJsonObject { put("event", e); put("schema", "public"); put("table", t) })
                     }
                 }

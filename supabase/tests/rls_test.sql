@@ -143,6 +143,38 @@ select pg_temp.check((public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"am
 reset role;
 select pg_temp.check((select count(*) from public.user_notifications where user_id = 'b2222222-2222-4222-8222-222222222222' and kind = 'price_drop') = 1, 'favourite price drop notifies');
 select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1') = 2, 'price history only on changes');
+-- Phase 0: deal_seen throttled to 6 h, history only on >= 1% moves, compaction keeps one row per day
+update public.deal_seen set seen_at = '2001-01-01' where deal_id = 'amazon:rls-ing-1';
+set role service_role;
+select public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":600,"original_price":1000}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select seen_at from public.deal_seen where deal_id = 'amazon:rls-ing-1') > now() - interval '1 hour', 'stale deal_seen (> 6 h) is refreshed');
+update public.deal_seen set seen_at = now() - interval '1 hour' where deal_id = 'amazon:rls-ing-1';
+create temp table _seen_before as select seen_at from public.deal_seen where deal_id = 'amazon:rls-ing-1';
+set role service_role;
+select public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":600,"original_price":1000}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select seen_at from public.deal_seen where deal_id = 'amazon:rls-ing-1') = (select seen_at from _seen_before), 'fresh deal_seen (< 6 h) is NOT rewritten');
+set role service_role;
+select public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":597,"original_price":1000}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select current_price from public.deals where id = 'amazon:rls-ing-1') = 597, 'deal keeps the exact new price');
+select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1') = 2, 'a 0.5% move adds no history row');
+set role service_role;
+select public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":560,"original_price":1000}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1') = 3, 'a 6% move adds a history row');
+insert into public.price_history (deal_id, current_price, original_price, checked_at) values
+  ('amazon:rls-ing-1', 650, 1000, '2020-01-05 08:00+02'), ('amazon:rls-ing-1', 640, 1000, '2020-01-05 12:00+02'),
+  ('amazon:rls-ing-1', 660, 1000, '2020-01-05 20:00+02'), ('amazon:rls-ing-1', 630, 1000, '2020-01-06 09:00+02');
+set role authenticated;
+select pg_temp.must_fail($$select public.compact_price_history(90)$$);
+reset role;
+set role service_role;
+select pg_temp.check(public.compact_price_history(90) = 2, 'compaction removes 2 of the 3 rows of an old day');
+reset role;
+select pg_temp.check((select current_price from public.price_history where deal_id = 'amazon:rls-ing-1' and checked_at::date = '2020-01-05') = 640, 'compaction keeps the day''s lowest price');
+select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1' and checked_at > now() - interval '1 day') = 3, 'recent history untouched by compaction');
 delete from public.deals where id like 'amazon:rls-ing-%';
 delete from public.alerts where query = 'rlsprobe phone';
 

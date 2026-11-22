@@ -87,6 +87,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val admin = booleanPreferencesKey("admin_mode")
         val celebrated = stringPreferencesKey("celebrated_orders")
         val adminSeen = stringPreferencesKey("admin_last_order_seen")
+        val syncCursor = stringPreferencesKey("deals_sync_cursor")
+        val lastFullSync = longPreferencesKey("deals_last_full_sync")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -125,6 +127,12 @@ class SettingsStore(private val context: Context, private val json: Json) {
         it[K.name] = name; it[K.phone] = phone; it[K.address] = address
     }
     suspend fun setScrapeKeywords(v: String) = context.dataStore.edit { it[K.keywords] = v }
+    /** Incremental deal sync position (server updated_at) + time of the last full snapshot; survives app restarts. */
+    suspend fun syncState(): Pair<String?, Long> = context.dataStore.data.first().let { it[K.syncCursor] to (it[K.lastFullSync] ?: 0L) }
+    suspend fun setSyncState(cursor: String?, lastFull: Long) = context.dataStore.edit {
+        if (cursor == null) it.remove(K.syncCursor) else it[K.syncCursor] = cursor
+        it[K.lastFullSync] = lastFull
+    }
     suspend fun lastAdminOrderSeen(): String = context.dataStore.data.first()[K.adminSeen].orEmpty()
     suspend fun setLastAdminOrderSeen(v: String) = context.dataStore.edit { it[K.adminSeen] = v }
     suspend fun setAdminMode(v: Boolean) = context.dataStore.edit { it[K.admin] = v }

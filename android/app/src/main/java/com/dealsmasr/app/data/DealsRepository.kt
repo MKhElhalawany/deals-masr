@@ -71,6 +71,7 @@ class DealsRepository(
     private val storeNames = mapOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر", "talabat" to "طلبات")
     private var lastSyncIso: String? = null
     private var lastFullSync = 0L
+    private var syncLoaded = false
     private val cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,rating,rating_count,active,deal_since,last_checked,updated_at"
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -96,25 +97,40 @@ class DealsRepository(
     private fun rows(text: String): List<JsonObject> = json.parseToJsonElement(text).jsonArray.map { it.jsonObject }
 
     /**
-     * Pulls server changes. Full snapshot every 30 min (or first run), otherwise only rows updated since the last sync.
-     * Returns deals that are new or cheaper than what this phone had cached (for notifications).
+     * Pulls server changes. A full snapshot only when this phone has no cache yet or once a day; otherwise only rows
+     * changed since the last sync (position kept across app restarts). Returns deals that are new or cheaper than
+     * what this phone had cached (for notifications).
      */
     suspend fun refresh(): List<DealEvent> {
-        val full = lastSyncIso == null || System.currentTimeMillis() - lastFullSync > 30 * 60_000
+        if (!syncLoaded) { settings.syncState().let { (c, f) -> lastSyncIso = c; lastFullSync = f }; syncLoaded = true }
         val before = dealDao.snapshot().associateBy { it.id }
-        val text = if (full) supabase.select("deals", "select=$cols&active=eq.true&order=discount_pct.desc&limit=400")
-                   else supabase.select("deals", "select=$cols&updated_at=gt.${enc(lastSyncIso!!)}&order=updated_at.asc&limit=500")
-        val list = rows(text)
-        val deals = list.map { toDeal(it) }
+        val now = System.currentTimeMillis()
+        val full = lastSyncIso == null || before.isEmpty() || now - lastFullSync > 24 * 3_600_000L
+        val list = ArrayList<JsonObject>()
         if (full) {
-            dealDao.replaceAll(deals.map { it.toEntity() }); lastFullSync = System.currentTimeMillis()
+            list += rows(supabase.select("deals", "select=$cols&active=eq.true&order=discount_pct.desc&limit=400"))
+        } else {
+            // gte (not gt): rows written in one batch share a timestamp; re-reading the boundary row is harmless
+            var cursor = lastSyncIso!!
+            for (page in 0 until 4) {
+                val batch = rows(supabase.select("deals", "select=$cols&updated_at=gte.${enc(cursor)}&order=updated_at.asc&limit=500"))
+                list += batch
+                val last = batch.mapNotNull { it.str("updated_at") }.maxOrNull()
+                if (batch.size < 500 || last == null || last == cursor) break
+                cursor = last
+            }
+        }
+        val deals = list.map { toDeal(it) }.distinctBy { it.id }
+        if (full) {
+            dealDao.replaceAll(deals.map { it.toEntity() }); lastFullSync = now
         } else {
             dealDao.upsertAll(deals.filter { it.active }.map { it.toEntity() })
             deals.filter { !it.active }.forEach { dealDao.delete(it.id) }
         }
-        list.mapNotNull { it.str("updated_at") }.maxOrNull()?.let { lastSyncIso = it }
+        list.mapNotNull { it.str("updated_at") }.maxOrNull()?.let { if (lastSyncIso == null || it > lastSyncIso!!) lastSyncIso = it }
             ?: run { if (lastSyncIso == null) lastSyncIso = java.time.Instant.now().toString() }
-        settings.setLastRefresh(System.currentTimeMillis())
+        settings.setSyncState(lastSyncIso, lastFullSync)
+        settings.setLastRefresh(now)
         if (before.isEmpty()) return emptyList() // first sync: don't announce the whole catalogue
         return deals.filter { it.active }.mapNotNull { d ->
             val old = before[d.id]

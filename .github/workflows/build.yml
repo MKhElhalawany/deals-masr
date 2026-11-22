@@ -154,6 +154,19 @@ jobs:
           pip install -q httpx
           python3 tools/edge_setup.py
 
+  # Phase 0: one-time, low-rate store probe. Runs ONLY when the commit message contains [probe].
+  store-probe:
+    needs: [edge]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[probe]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          pip install -q httpx
+          python3 tools/store_probe.py
+
   # Push notifications: registers the Android app in the owner's Firebase project and outputs its PUBLIC client ids.
   firebase:
     needs: plan

@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 val rt = container.realtime
+                rt.setMinPct(container.settings.current().notifyMinPct)
                 if (container.auth.isSignedIn) rt.start()
                 try {
                     launch {
@@ -58,11 +59,15 @@ class MainActivity : ComponentActivity() {
                             runCatching { OrderEvents.check(this@MainActivity, container) }
                         }
                     }
+                    launch {   // live filter follows the user's "notify me from X%" choice
+                        container.settings.settings.collect { rt.setMinPct(it.notifyMinPct) }
+                    }
                     var tick = 0
                     while (true) {
                         if (container.auth.isSignedIn) {
                             rt.start()
-                            if (!rt.connected.value) {
+                            // socket down → every minute; socket up → small catch-up every 5 min (deals below the live filter, deactivations)
+                            if (!rt.connected.value || tick % 10 == 0) {
                                 runCatching { notifyDeals(container, container.deals.refresh()) }
                                 if (tick % 2 == 0) runCatching { OrderEvents.check(this@MainActivity, container) }
                             }
