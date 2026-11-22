@@ -229,7 +229,7 @@ async function probe(url: string) {
   const base = { url, final: r.url, status: r.status, bytes: html.length, ms, contentType: r.headers.get("content-type") ?? "",
     title: (html.match(/<title[^>]*>([^<]{0,140})/i)?.[1] ?? "").trim(),
     challenge: /Just a moment|cf-chl|challenges\.cloudflare|captcha|Attention Required|Access Denied|validateCaptcha|px-captcha|perimeterx/i.test(html.slice(0, 20000)) };
-  if (u.pathname.endsWith("robots.txt")) return { ...base, robots: html.slice(0, 4000) };
+  if (u.pathname.endsWith("robots.txt")) return { ...base, robots: html.slice(0, 60000) };
   if (u.pathname.endsWith(".xml") || html.trimStart().startsWith("<?xml")) {
     const locs = [...html.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
     return { ...base, sitemapEntries: locs.length, sitemapSample: locs.slice(0, 15) };

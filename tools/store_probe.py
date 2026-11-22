@@ -24,13 +24,15 @@ RAW: dict[str, list] = {}
 
 
 class Robots:
+    """robots.txt rules for User-agent: * (consecutive User-agent lines share a group; * and $ wildcards;
+    longest match wins, Allow wins ties) — the standard precedence (RFC 9309)."""
+
     def __init__(self, text: str | None):
-        self.dis: list[str] = []
-        self.allow: list[str] = []
+        self.rules: list[tuple[str, str]] = []
         self.sitemaps: list[str] = []
         if not text:
             return
-        group = False
+        in_star, prev_ua = False, False
         for line in text.splitlines():
             line = line.split("#", 1)[0].strip()
             if ":" not in line:
@@ -38,27 +40,32 @@ class Robots:
             k, v = (x.strip() for x in line.split(":", 1))
             k = k.lower()
             if k == "user-agent":
-                group = v == "*"
-            elif k == "sitemap":
+                if not prev_ua:
+                    in_star = False
+                in_star = in_star or v == "*"
+                prev_ua = True
+                continue
+            prev_ua = False
+            if k == "sitemap":
                 self.sitemaps.append(v)
-            elif group and k == "disallow" and v:
-                self.dis.append(v)
-            elif group and k == "allow" and v:
-                self.allow.append(v)
+            elif in_star and k in ("allow", "disallow") and v:
+                self.rules.append((k, v))
+
+    @staticmethod
+    def _rx(rule: str):
+        import re
+        end = rule.endswith("$")
+        body = "".join(".*" if ch == "*" else re.escape(ch) for ch in rule.rstrip("$"))
+        return re.compile("^" + body + ("$" if end else ""))
 
     def ok(self, url: str) -> bool:
         p = urlsplit(url)
-        path = p.path + (("?" + p.query) if p.query else "")
-
-        def match(rule):
-            rule = rule.rstrip("$")
-            if "*" in rule:
-                head = rule.split("*", 1)[0]
-                return path.startswith(head)
-            return path.startswith(rule)
-        best_dis = max((len(r) for r in self.dis if match(r)), default=-1)
-        best_allow = max((len(r) for r in self.allow if match(r)), default=-1)
-        return best_dis < 0 or best_allow >= best_dis
+        path = (p.path or "/") + (("?" + p.query) if p.query else "")
+        best = None
+        for k, v in self.rules:
+            if self._rx(v).match(path) and (best is None or len(v) > len(best[1]) or (len(v) == len(best[1]) and k == "allow")):
+                best = (k, v)
+        return best is None or best[0] == "allow"
 
 
 def main():
