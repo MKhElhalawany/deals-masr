@@ -81,21 +81,32 @@ async function scanStore(store: string) {
   if (!spec || !(cfg.scrape_stores ?? Object.keys(STORES)).includes(store)) return { skipped: "store disabled" };
   // backoff after a block: 10 minutes
   const prev = (await select(`scraper_status?select=ok,message,last_run&store=eq.${store}`))[0];
-  if (prev && !prev.ok && String(prev.message).startsWith("⛔") && Date.now() - Date.parse(prev.last_run) < 10 * 60_000) return { skipped: "backoff" };
+  if (prev && !prev.ok && String(prev.message).startsWith("⛔") && Date.now() - Date.parse(prev.last_run) < (store === "jumia" ? 30 : 3) * 60_000) return { skipped: "backoff" };
 
   const kws: string[] = cfg.scrape_keywords ?? [];
-  const step = Math.floor(Date.now() / 30_000);
-  let url: string, label: string;
-  if (spec.deals.length && (step % 2 === 1 || !kws.length)) { url = spec.deals[Math.floor(step / 2) % spec.deals.length]; label = "صفحة العروض"; }
-  else if (kws.length) { const kw = kws[Math.floor(step / (spec.deals.length ? 2 : 1)) % kws.length]; url = spec.search(kw); label = kw; }
-  else return { skipped: "no targets" };
-
+  const step = Math.floor(Date.now() / 20_000);
+  // each run: the store's deals page (if any) + one keyword search, fetched in parallel
+  const targets: [string, string][] = [];
+  if (spec.deals.length) targets.push([spec.deals[step % spec.deals.length], "صفحة العروض"]);
+  if (kws.length) { const kw = kws[step % kws.length]; targets.push([spec.search(kw), kw]); }
+  if (spec.deals.length === 0 && kws.length > 1) { const kw = kws[(step + Math.floor(kws.length / 2)) % kws.length]; targets.push([spec.search(kw), kw]); }
+  if (!targets.length) return { skipped: "no targets" };
+  const label = targets.map((t) => t[1]).join(" + ");
   const t0 = Date.now();
   try {
-    const [code, html] = await fetchPage(url);
+    const pages = await Promise.allSettled(targets.map((t) => fetchPage(t[0])));
     const t1 = Date.now();
-    if ([403, 429, 503].includes(code)) throw new Blocked(`HTTP ${code}`);
-    const [items, cards] = spec.parse(html);
+    const items: unknown[] = [];
+    let cards = 0, code = 0, blockedCode = 0, firstErr: unknown = null;
+    for (const p of pages) {
+      if (p.status === "rejected") { firstErr ??= p.reason; continue; }
+      const [c, html] = p.value;
+      code = code || c;
+      if ([403, 429, 503].includes(c)) { blockedCode = c; continue; }
+      try { const [it, n] = spec.parse(html); items.push(...it); cards += n; } catch (e) { if (e instanceof Blocked) blockedCode = c || 403; else firstErr ??= e; }
+    }
+    if (!cards && blockedCode) throw new Blocked(`HTTP ${blockedCode}`);
+    if (!cards && firstErr) throw firstErr;
     const t2 = Date.now();
     const res = await ingest(items);
     const t3 = Date.now();
@@ -105,11 +116,11 @@ async function scanStore(store: string) {
     await status(store, cards > 0, cards > 0
       ? `✓ ${res.accepted} عرض من ${cards} منتج (${label}) · جديد/نزل: ${res.events.length} · تحميل ${t1 - t0}ms · حفظ ${t3 - t2}ms · push ${t4 - t3}ms (${pushed})`
       : `⚠️ الصفحة اتقرت بس مفيهاش منتجات (${label}) — HTTP ${code}`, res.accepted);
-    if (step % 120 === 0 && store === "amazon") await rest("POST", "rpc/expire_stale_deals", { p_hours: 36 });
+    if (step % 180 === 0) await rest("POST", "rpc/expire_stale_deals", { p_hours: 36 });
     return { store, label, code, cards, accepted: res.accepted, events: res.events.length, fetch_ms: t1 - t0, parse_ms: t2 - t1, save_ms: t3 - t2, push_ms: t4 - t3 };
   } catch (e) {
     const blocked = e instanceof Blocked;
-    await status(store, false, blocked ? `⛔ المتجر حاجب سيرفر Supabase (${e.message}) — هنحاول تاني بعد 10 دقايق` : `⚠️ ${String(e).slice(0, 250)}`);
+    await status(store, false, blocked ? `⛔ المتجر حاجب سيرفر Supabase (${e.message}) — هنحاول تاني بعد شوية` : `⚠️ ${String(e).slice(0, 250)}`);
     return { store, error: String(e) };
   }
 }
@@ -189,13 +200,12 @@ Deno.serve(async (req) => {
     else if (await vmAlive()) out = { skipped: "vm worker active" };
     else if (body.job === "scan") {
       out = await scanStore(String(body.store));
-      if (body.store === "amazon") await status("edge", true, `شغال ✓ ${new Date().toISOString().slice(11, 19)} UTC · Supabase Edge كل 30 ث · push ${pushEnabled() ? "on" : "off"}`);
+      if (body.store === "amazon") await status("edge", true, `شغال ✓ ${new Date().toISOString().slice(11, 19)} UTC · Supabase Edge كل 20 ث · push ${pushEnabled() ? "on" : "off"}`);
     } else if (body.job === "debug") {   // CI diagnostics only (secret-protected): first product card of a store page
       const spec = STORES[String(body.store)];
       const [code, html] = await fetchPage(spec.deals[0] ?? spec.search("headphones"));
-      const i = html.search(/s-search-result|article class="prd|\/p\//);
-      const n = html.indexOf("s-search-result", i + 7000);
-      out = { code, length: html.length, sample: i >= 0 ? html.slice(i, i + 6000) + "\n=====\n" + (n > 0 ? html.slice(n, n + 6000) : "") : html.slice(0, 3000) };
+      const marks = [...html.matchAll(/data-component-type="s-search-result"|<article class="prd|href="[^"]*\/p\//g)].map((m) => m.index!);
+      out = { code, length: html.length, sample: marks.length ? marks.slice(1, 3).map((i) => html.slice(i, i + 7000)).join("\n=====\n") : html.slice(0, 3000) };
     } else if (body.job === "search") out = await runSearch(Number(body.id));
     else if (body.job === "shein") out = await runShein(Number(body.id));
     else out = { error: "unknown job" };

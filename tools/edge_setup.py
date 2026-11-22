@@ -99,15 +99,17 @@ create trigger call_scan after insert on public.shein_quotes for each row execut
 drop trigger if exists call_scan on public.orders;
 create trigger call_scan after insert or update of status on public.orders for each row execute function public.tg_call_scan();
 """)
-    for s in STORES:
-        S.sql(ref, f"select cron.schedule('scan-{s}', '30 seconds', $c$select app_private.call_scan('{{\"job\":\"scan\",\"store\":\"{s}\"}}'::jsonb)$c$)")
+    # free plan = 500k runs/month. amazon + noon every 20 s (2 pages each) ≈ 260k; jumia (Cloudflare-blocked) every 5 min
+    schedules = {"amazon": "20 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *"}
+    for s, every in schedules.items():
+        S.sql(ref, f"select cron.schedule('scan-{s}', '{every}', $c$select app_private.call_scan('{{\"job\":\"scan\",\"store\":\"{s}\"}}'::jsonb)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []
     print("cron jobs:", ", ".join(f"{j['jobname']} ({j['schedule']})" for j in jobs))
 
     # 4) live check from Supabase's servers to the stores (real numbers, no phone involved)
     time.sleep(5)
     OUT.append("### 🛰️ سيرفر Supabase (مجاني، بدون فيزا) — فحص حقيقي للمتاجر")
-    OUT.append(f"الجدولة: كل متجر كل 30 ث ({len(jobs)} مهام) · الإشعارات الفورية: {'✅' if fsa else '⏳ مش متفعّلة'}")
+    OUT.append(f"الجدولة: أمازون ونون كل 20 ث (صفحتين في كل مرة)، جوميا كل 5 دقايق ({len(jobs)} مهام) · الإشعارات الفورية: {'✅' if fsa else '⏳ مش متفعّلة'}")
     OUT.append("| المتجر | HTTP | منتجات اتقرت | عروض اتحفظت | تحميل الصفحة | حفظ | الإجمالي |\n|---|---|---|---|---|---|---|")
     c = httpx.Client(timeout=90)
     working = 0
@@ -139,7 +141,7 @@ create trigger call_scan after insert or update of status on public.orders for e
         except Exception as e:
             print(f"debug {s} failed: {e}")
     OUT.append(f"\nمتاجر شغالة فعلاً من سيرفر Supabase: **{working}/{len(STORES)}**. "
-               "أقصى تأخير للاكتشاف ≈ 30 ث (دورة الفحص) + زمن الصفحة؛ صفحة العروض بتتراجع كل ~60 ث.")
+               "أقصى تأخير للاكتشاف ≈ 20 ث (دورة الفحص) + زمن الصفحة؛ صفحة عروض أمازون بتتراجع كل 20 ث.")
     text = "\n".join(OUT)
     print(text)
     out("report", text)
