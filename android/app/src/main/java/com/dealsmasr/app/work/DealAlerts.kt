@@ -75,7 +75,7 @@ object DealAlerts {
         for (e in events.sortedByDescending { it.deal.discountPct }) {
             val d = e.deal
             if (d.discountPct < minPct) continue
-            val key = "${d.id}@${d.currentPrice}"
+            val key = "${d.id}@${Math.round(d.currentPrice)}"
             if (key in sentKeys) continue // same product at same price already announced
             sentKeys[key] = now
             val lvl = level(d.discountPct)
@@ -124,6 +124,47 @@ object DealAlerts {
                 .build()
             runCatching { NotificationManagerCompat.from(ctx).notify(SUMMARY_ID, n) }
         }
+    }
+
+    /**
+     * Push from our server (FCM data message). Same channels/levels as local alerts and shares their de-duplication,
+     * so a deal that already arrived over Realtime while the app was open is not announced twice.
+     */
+    @Synchronized
+    fun notifyPush(ctx: Context, data: Map<String, String>, minPct: Int) {
+        if (!Notifier.canNotify(ctx)) return
+        val pct = data["pct"]?.toDoubleOrNull()
+        if (pct != null && pct < minPct) return
+        val dealId = data["deal_id"]
+        val now = System.currentTimeMillis()
+        if (dealId != null) {
+            val key = "$dealId@${data["price"].orEmpty()}"
+            if (key in sentKeys) return
+            sentKeys[key] = now
+        }
+        val lvl = when (data["level"]) { "urgent" -> Level.URGENT; "super" -> Level.SUPER; "hot" -> Level.HOT; else -> Level.LOW }
+        val title = data["title"] ?: return
+        val body = data["body"].orEmpty()
+        val tag = data["tag"]
+        val id = when {
+            dealId != null -> dealId.hashCode()
+            tag != null -> tag.hashCode()
+            data["type"] == "deal" -> SUMMARY_ID
+            else -> (title + body).hashCode()
+        }
+        val route = data["route"] ?: dealId?.let { "product/$it" } ?: "deals"
+        val channel = if (data["type"] == "personal" && tag != null && (tag.startsWith("c") || tag.startsWith("n"))) Notifier.CH_ORDERS else lvl.channel
+        val n = NotificationCompat.Builder(ctx, channel)
+            .setSmallIcon(android.R.drawable.stat_notify_more)
+            .setContentTitle(title)
+            .setContentText(body.substringBefore('\n'))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setContentIntent(pending(ctx, id, route))
+            .setPriority(if (lvl == Level.URGENT || lvl == Level.SUPER) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
+            .setCategory(if (lvl == Level.URGENT) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setAutoCancel(true)
+            .build()
+        runCatching { NotificationManagerCompat.from(ctx).notify(id, n) }
     }
 
     /** Called when the user opens the app: restart the quiet summary counter. */

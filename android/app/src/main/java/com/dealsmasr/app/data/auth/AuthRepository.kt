@@ -140,7 +140,11 @@ class AuthRepository(
         return isOwner
     }
 
+    /** Runs while the session is still valid (e.g. remove this phone's push token). */
+    var beforeSignOut: (suspend () -> Unit)? = null
+
     suspend fun signOut() {
+        runCatching { beforeSignOut?.invoke() }
         supabase.signOut()
         settings.setAdminMode(false)
         _state.value = AuthState.SignedOut

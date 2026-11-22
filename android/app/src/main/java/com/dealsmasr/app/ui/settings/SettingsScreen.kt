@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,6 +100,11 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                     }
                 }
                 Text("العروض بيتابعها سيرفرنا 24 ساعة. 10–29% إشعار هادي · 30%+ 🔥 · 50%+ ⚡ · 70%+ 🚨 «الحق!»",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val live by c.realtime.connected.collectAsState()
+                Text(
+                    (if (live) "🟢 متصل مباشرة — العروض بتظهر أول ما السيرفر يلاقيها" else "⚪ الاتصال المباشر مقفول — بنحدّث كل دقيقة") + "\n" +
+                        (if (com.dealsmasr.app.push.Push.configured) "🔔 إشعارات فورية حتى والتطبيق مقفول" else "🔕 الإشعارات الفورية والتطبيق مقفول لسه مش متفعّلة (بنشيّك كل 15 دقيقة)"),
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Section("المظهر") {

@@ -82,6 +82,16 @@ select pg_temp.check((select count(*) from public.shein_quotes) = 0, 'B cannot s
 select pg_temp.check((select count(*) from public.search_requests) = 0, 'B cannot see A searches');
 reset role;
 
+-- push tokens: own rows only
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1111111-1111-4111-8111-111111111111', false);
+insert into public.device_tokens (token) values ('token-of-user-a-0123456789');
+select pg_temp.must_fail($$insert into public.device_tokens (token, user_id) values ('token-forged-0123456789', 'b2222222-2222-4222-8222-222222222222')$$);
+select set_config('request.jwt.claim.sub', 'b2222222-2222-4222-8222-222222222222', false);
+select pg_temp.check((select count(*) from public.device_tokens) = 0, 'B cannot read A push tokens');
+with u as (update public.device_tokens set enabled = false returning 1) select pg_temp.check((select count(*) from u) = 0, 'B cannot change A tokens');
+reset role;
+
 -- owner bootstrap: only the configured e-mail, only after a one-time-code login
 insert into app_private.settings (key, value) values ('owner_email', 'rls-b@example.com')
   on conflict (key) do update set value = excluded.value;

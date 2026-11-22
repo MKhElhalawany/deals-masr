@@ -43,6 +43,9 @@ class DB:
         prefer = "return=minimal" + (",resolution=merge-duplicates" if upsert else "")
         self._req("POST", f"/{table}", content=json.dumps(rows), headers={"Prefer": prefer})
 
+    def delete(self, table: str, filt: str):
+        self._req("DELETE", f"/{table}?{filt}")
+
     def update(self, table: str, filt: str, patch: dict):
         self._req("PATCH", f"/{table}?{filt}", content=json.dumps(patch), headers={"Prefer": "return=minimal"})
 
@@ -100,9 +103,9 @@ class DB:
                                          "last_run": now_iso()}], upsert=True)
 
     # ───────── notifications for users (alerts + favourites)
-    def notify(self, events: list[dict]):
+    def notify(self, events: list[dict]) -> list[dict]:
         if not events:
-            return
+            return []
         alerts = self.select("alerts", "select=user_id,query,min_discount,stores,max_price")
         deal_ids = ",".join('"' + e["item"].id + '"' for e in events)
         favs = self.select("favorites", f"select=user_id,deal_id&deal_id=in.({deal_ids})")
@@ -125,3 +128,4 @@ class DB:
                                      "title": f"نزل السعر! {it.current_price:,.0f} ج.م",
                                      "body": f"{it.title[:120]} (كان {e['old_price']:,.0f})"})
         self.insert("user_notifications", rows)
+        return rows

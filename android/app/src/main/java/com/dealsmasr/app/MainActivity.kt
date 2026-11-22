@@ -18,6 +18,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.dealsmasr.app.data.ThemeMode
+import com.dealsmasr.app.data.realtime.RowChange
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.dealsmasr.app.ui.AppNav
@@ -40,19 +41,37 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
         val container = (application as DealsApp).container
         DealAlerts.resetSummary()
-        // While the app is visible: pull new deals from our server every minute.
+        // While the app is visible: live updates over Supabase Realtime (WebSocket). Changes land in the local cache
+        // the moment the server writes them. Polling is only a fallback while the socket is down.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                var tick = 0
-                while (true) {
-                    if (container.auth.isSignedIn) {
-                        // read-only sync of what the server found (incremental, tiny)
-                        runCatching { container.deals.refresh() }
-                        // every 2 minutes: order confirmations (customers) / new orders (admin)
-                        if (tick % 2 == 0) runCatching { OrderEvents.check(this@MainActivity, container) }
+                val rt = container.realtime
+                if (container.auth.isSignedIn) rt.start()
+                try {
+                    launch {
+                        rt.changes.collect { ch -> runCatching { onRowChange(container, ch) } }
                     }
-                    tick++
-                    delay(60_000)
+                    launch {
+                        // (re)subscribed → catch up on anything that changed while disconnected
+                        rt.subscribed.collect {
+                            runCatching { notifyDeals(container, container.deals.refresh()) }
+                            runCatching { OrderEvents.check(this@MainActivity, container) }
+                        }
+                    }
+                    var tick = 0
+                    while (true) {
+                        if (container.auth.isSignedIn) {
+                            rt.start()
+                            if (!rt.connected.value) {
+                                runCatching { notifyDeals(container, container.deals.refresh()) }
+                                if (tick % 2 == 0) runCatching { OrderEvents.check(this@MainActivity, container) }
+                            }
+                        } else rt.stop()
+                        tick++
+                        delay(if (rt.connected.value) 30_000 else 60_000)
+                    }
+                } finally {
+                    rt.stop()
                 }
             }
         }
@@ -77,6 +96,27 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    private suspend fun notifyDeals(c: AppContainer, events: List<com.dealsmasr.app.data.DealEvent>) {
+        if (events.isEmpty()) return
+        val s = c.settings.current()
+        if (s.notificationsEnabled) DealAlerts.notify(this, events, s.notifyMinPct)
+    }
+
+    private suspend fun onRowChange(c: AppContainer, ch: RowChange) {
+        when (ch.table) {
+            "deals" -> ch.record?.let { r -> c.deals.applyRealtime(r)?.let { notifyDeals(c, listOf(it)) } }
+            "user_notifications" -> {
+                val s = c.settings.current()
+                c.deals.serverNotifications().forEach { n ->
+                    if (s.notificationsEnabled) Notifier.show(this, (n.dealId ?: ("sn" + n.id)).hashCode(), Notifier.CH_DEALS, n.title, n.body,
+                        n.dealId?.let { "product/$it" })
+                }
+            }
+            "orders" -> OrderEvents.check(this, c)
+            "shein_quotes" -> c.shein.refreshQuotes()
         }
     }
 

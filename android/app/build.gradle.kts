@@ -14,8 +14,8 @@ android {
         applicationId = "com.dealsmasr.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "3.0.0"
+        versionCode = 7
+        versionName = "3.1.0"
         val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?).orEmpty()
         buildConfigField("String", "DEFAULT_API_URL", "\"$apiBaseUrl\"")
         // Supabase project URL + public anon/publishable key (not secret; data is protected by RLS).
@@ -23,6 +23,11 @@ android {
         fun prop(name: String, env: String) = ((project.findProperty(name) as String?) ?: System.getenv(env)).orEmpty().trim()
         buildConfigField("String", "SUPABASE_URL", "\"${prop("supabaseUrl", "SUPABASE_URL")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${prop("supabaseAnonKey", "SUPABASE_ANON_KEY")}\"")
+        // Firebase (push). Public client identifiers, injected by CI from the Firebase project; empty = push disabled.
+        buildConfigField("String", "FIREBASE_API_KEY", "\"${prop("firebaseApiKey", "FIREBASE_API_KEY")}\"")
+        buildConfigField("String", "FIREBASE_APP_ID", "\"${prop("firebaseAppId", "FIREBASE_APP_ID")}\"")
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"${prop("firebaseProjectId", "FIREBASE_PROJECT_ID")}\"")
+        buildConfigField("String", "FIREBASE_SENDER_ID", "\"${prop("firebaseSenderId", "FIREBASE_SENDER_ID")}\"")
     }
 
     // Fixed debug key (not a secret) so every CI build can update the previously installed app.
@@ -85,6 +90,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
     implementation(libs.security.crypto)
+    implementation(libs.firebase.messaging)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
 }

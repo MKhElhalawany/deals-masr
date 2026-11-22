@@ -73,8 +73,12 @@ def main():
         server = ("\n\n**سيرفر العروض:** ✅ شغال 24 ساعة وبيحدّث العروض." if E("DEPLOY_RESULT") == "deployed" else
                   "\n\n**سيرفر العروض:** ⏳ لسه مش متجهز — اتبع docs/SERVER_SETUP.md (خطوة واحدة: سيرفر Oracle المجاني). "
                   "لحد ما يشتغل، التطبيق هيعرض العروض اللي في قاعدة البيانات بس.")
-        body = (f"## ✅ النسخة الجديدة جاهزة\n\n**نزّلها من هنا:** {E('APK')}{server}\n\n"
-                f"قاعدة البيانات وتسجيل الدخول والأمان اتجهزوا واتختبروا تلقائياً.{admin}\n\n[تفاصيل التشغيل]({run})")
+        push = ("\n\n**الإشعارات الفورية (والتطبيق مقفول):** ✅ متفعّلة (Firebase)." if E("FIREBASE") == "true" else
+                "\n\n**الإشعارات الفورية (والتطبيق مقفول):** ⏳ مش متفعّلة لسه — اتبع docs/PUSH_SETUP.md (مشروع Firebase مجاني + Secret واحد)."
+                + (f" السبب: {E('FIREBASE_ERROR')}" if E("FIREBASE_ERROR") else ""))
+        latency = f"\n\n## ⏱️ قياسات حقيقية للسرعة (من التشغيل ده)\n\n{E('LATENCY')}" if E("LATENCY") else ""
+        body = (f"## ✅ النسخة الجديدة جاهزة\n\n**نزّلها من هنا:** {E('APK')}{server}{push}\n\n"
+                f"قاعدة البيانات وتسجيل الدخول والأمان اتجهزوا واتختبروا تلقائياً.{admin}{latency}\n\n[تفاصيل التشغيل]({run})")
         upsert_issue("app-release", RELEASE_TITLE, body)
         print("reported release")
     else:

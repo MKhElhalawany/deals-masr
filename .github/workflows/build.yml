@@ -32,6 +32,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
           HAS_SERVER: ${{ secrets.SERVER_HOST != '' && secrets.SERVER_SSH_KEY != '' }}
+          HAS_FIREBASE: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' || secrets.FIREBASE_ANDROID_CONFIG != '' }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           go=false
@@ -41,6 +42,8 @@ jobs:
             need=false
             echo "$latest" | grep -q "connected:$GITHUB_SHA" || need=true
             [ "$HAS_SERVER" = "true" ] && [ "$deployed" != "$GITHUB_SHA" ] && need=true
+            # Firebase secret added later → rebuild once so the APK gets push
+            [ "$HAS_FIREBASE" = "true" ] && ! echo "$latest" | grep -Eq "push:(on|failed)" && need=true
             if [ "$need" = "true" ]; then
               # don't hammer a failing setup: retry at most once an hour
               recent=$(gh issue list --repo "$GITHUB_REPOSITORY" --label pipeline-failure --state open --json updatedAt \
@@ -120,6 +123,28 @@ jobs:
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: python3 tools/supabase_setup.py
 
+  # Push notifications: registers the Android app in the owner's Firebase project and outputs its PUBLIC client ids.
+  firebase:
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.f.outputs.enabled }}
+      error: ${{ steps.f.outputs.error }}
+      api_key: ${{ steps.f.outputs.api_key }}
+      app_id: ${{ steps.f.outputs.app_id }}
+      project_id: ${{ steps.f.outputs.project_id }}
+      sender_id: ${{ steps.f.outputs.sender_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: f
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          FIREBASE_ANDROID_CONFIG: ${{ secrets.FIREBASE_ANDROID_CONFIG }}
+        run: |
+          pip install -q httpx google-auth requests
+          python3 tools/firebase_setup.py
+
   # Deploys the 24/7 scraping worker to the server (Oracle Cloud Always Free VM) when SERVER_HOST + SERVER_SSH_KEY exist.
   deploy-worker:
     needs: [supabase, worker-tests]
@@ -137,6 +162,7 @@ jobs:
           SERVER_USER: ${{ secrets.SERVER_USER }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           PROXY_URL: ${{ secrets.PROXY_URL }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |
           if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_SSH_KEY" ]; then
             echo "result=no-server" >> "$GITHUB_OUTPUT"; echo "::notice::No server yet (SERVER_HOST / SERVER_SSH_KEY secrets)."; exit 0
@@ -146,6 +172,8 @@ jobs:
           printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_server
           WORKER_ENV_FILE=$RUNNER_TEMP/worker.env python3 tools/supabase_setup.py
           [ -n "$PROXY_URL" ] && echo "PROXY_URL=$PROXY_URL" >> "$RUNNER_TEMP/worker.env"
+          # docker --env-file needs one line: pass the service account base64-encoded (never printed)
+          [ -n "$FIREBASE_SERVICE_ACCOUNT" ] && echo "FIREBASE_SERVICE_ACCOUNT=$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT" | base64 -w0)" >> "$RUNNER_TEMP/worker.env"
           SSH="ssh -i $HOME/.ssh/id_server -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
           set +e
           scp -q -i ~/.ssh/id_server -o StrictHostKeyChecking=accept-new "$RUNNER_TEMP/worker.env" "$USER_AT:deals-worker.env" \
@@ -165,7 +193,7 @@ jobs:
             || GH_TOKEN=${{ github.token }} gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/worker-deployed -f sha="$GITHUB_SHA" >/dev/null
 
   android:
-    needs: [backend, supabase, no-device-scraping]
+    needs: [backend, supabase, no-device-scraping, firebase]
     if: always() && needs.backend.result == 'success' && needs.no-device-scraping.result == 'success' && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
@@ -184,6 +212,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ needs.supabase.outputs.key || vars.SUPABASE_ANON_KEY }}
+          FIREBASE_API_KEY: ${{ needs.firebase.outputs.api_key }}
+          FIREBASE_APP_ID: ${{ needs.firebase.outputs.app_id }}
+          FIREBASE_PROJECT_ID: ${{ needs.firebase.outputs.project_id }}
+          FIREBASE_SENDER_ID: ${{ needs.firebase.outputs.sender_id }}
         run: ./gradlew --no-daemon assembleDebug -PapiBaseUrl="${{ vars.API_BASE_URL }}"
       - name: Publish APK (main only)
         id: publish
@@ -191,12 +223,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CONNECTED: ${{ needs.supabase.outputs.url || vars.SUPABASE_URL }}
+          PUSH: ${{ needs.firebase.outputs.enabled == 'true' && 'push:on' || (needs.firebase.outputs.error != '' && 'push:failed' || 'push:off') }}
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk DealsMasr.apk
           TAG="build-${{ github.run_number }}-${{ github.run_attempt }}"
           if [ -n "$CONNECTED" ]; then
             gh release create "$TAG" DealsMasr.apk --title "عروض مصر — نسخة ${{ github.run_number }}" \
-              --notes "connected:${{ github.sha }}" --latest
+              --notes "connected:${{ github.sha }} $PUSH" --latest
             echo "connected=yes" >> "$GITHUB_OUTPUT"
           else
             gh release create "$TAG" DealsMasr.apk --title "Build ${{ github.run_number }} (no backend)" \
@@ -205,8 +238,34 @@ jobs:
           fi
           echo "apk=https://github.com/${{ github.repository }}/releases/download/$TAG/DealsMasr.apk" >> "$GITHUB_OUTPUT"
 
+  # Real measurements (not promises): server write → Realtime WebSocket delivery, FCM accept time, worker status.
+  latency:
+    needs: [supabase, deploy-worker]
+    if: always() && needs.supabase.result == 'success' && needs.supabase.outputs.url != ''
+    runs-on: ubuntu-latest
+    outputs:
+      report: ${{ steps.m.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: m
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_URL: ${{ needs.supabase.outputs.url }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ needs.supabase.outputs.key }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install -q httpx websockets google-auth requests
+          umask 077
+          WORKER_ENV_FILE=$RUNNER_TEMP/m.env python3 tools/supabase_setup.py
+          set +e
+          LATENCY_OUT=$RUNNER_TEMP/latency.md WORKER_ENV_FILE=$RUNNER_TEMP/m.env python3 tools/measure_latency.py
+          rc=$?
+          rm -f $RUNNER_TEMP/m.env
+          { echo "report<<LATENCY_EOF"; cat $RUNNER_TEMP/latency.md; echo; echo "LATENCY_EOF"; } >> "$GITHUB_OUTPUT"
+          exit $rc
+
   report:
-    needs: [plan, backend, supabase-sql, supabase, android, no-device-scraping, worker-tests, deploy-worker]
+    needs: [plan, backend, supabase-sql, supabase, android, no-device-scraping, worker-tests, deploy-worker, firebase, latency]
     if: always() && needs.plan.outputs.go == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -228,4 +287,7 @@ jobs:
           CONNECTED: ${{ needs.android.outputs.connected }}
           OWNER: ${{ needs.supabase.outputs.owner }}
           ADMIN_READY: ${{ needs.supabase.outputs.admin_ready }}
+          FIREBASE: ${{ needs.firebase.outputs.enabled }}
+          FIREBASE_ERROR: ${{ needs.firebase.outputs.error }}
+          LATENCY: ${{ needs.latency.outputs.report }}
         run: python3 tools/pipeline_report.py

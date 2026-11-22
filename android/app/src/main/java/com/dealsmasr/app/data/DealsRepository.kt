@@ -126,6 +126,24 @@ class DealsRepository(
         }
     }
 
+    /**
+     * Applies one row pushed over Realtime straight to the local cache (no network round-trip).
+     * Returns an event if it is a new deal or a price drop compared with what this phone had.
+     */
+    suspend fun applyRealtime(record: JsonObject): DealEvent? {
+        val d = toDeal(record)
+        if (d.id.isBlank() || d.id.contains(":ci-")) return null
+        val old = dealDao.get(d.id)
+        if (!d.active) { dealDao.delete(d.id); return null }
+        dealDao.upsertAll(listOf(d.toEntity()))
+        record.str("updated_at")?.let { u -> if (lastSyncIso == null || u > lastSyncIso!!) lastSyncIso = u }
+        return when {
+            old == null -> DealEvent(d, DealEvent.Kind.NEW, null)
+            d.currentPrice < old.currentPrice - 0.5 -> DealEvent(d, DealEvent.Kind.PRICE_DROP, old.currentPrice)
+            else -> null
+        }
+    }
+
     suspend fun refreshIfDue(maxAgeMillis: Long): List<DealEvent> =
         if (System.currentTimeMillis() - settings.current().lastRefresh >= maxAgeMillis) refresh() else emptyList()
 

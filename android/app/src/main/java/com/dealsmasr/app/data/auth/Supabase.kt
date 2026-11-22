@@ -219,6 +219,10 @@ class Supabase(private val store: SessionStore, private val json: Json) {
     suspend fun insert(table: String, row: JsonObject): String =
         call("POST", "/rest/v1/$table", row.toString(), token(), prefer = "return=representation")
 
+    /** Insert or update by primary key (RLS still applies). */
+    suspend fun upsert(table: String, row: JsonObject): String =
+        call("POST", "/rest/v1/$table", row.toString(), token(), prefer = "resolution=merge-duplicates,return=minimal")
+
     suspend fun delete(table: String, filter: String): String = call("DELETE", "/rest/v1/$table?$filter", null, token())
 
     suspend fun update(table: String, filter: String, patch: JsonObject): String =

@@ -80,7 +80,7 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
             if (s.notificationsEnabled) {
                 DealAlerts.notify(applicationContext, events, s.notifyMinPct)
                 c.deals.serverNotifications().forEach { n ->
-                    Notifier.show(applicationContext, ("sn" + n.id).hashCode(), Notifier.CH_DEALS, n.title, n.body,
+                    Notifier.show(applicationContext, (n.dealId ?: ("sn" + n.id)).hashCode(), Notifier.CH_DEALS, n.title, n.body,
                         n.dealId?.let { "product/$it" })
                 }
             }

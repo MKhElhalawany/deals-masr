@@ -48,3 +48,14 @@
 - Run CI, fix any compile errors, install APK, smoke-test on a device
 - Obtain Amazon Associates EG / Jumia KOL / noon network feed access and set env vars
 - Optional: FCM push, customer auth, Room migrations once schema changes
+
+## v3.1 — Realtime + push (fastest delivery)
+- Server: one parallel scan loop per store (STORE_INTERVAL_SEC=8 between pages of the same store; the deal page is visited every other step), plus a queue loop every 2 s for SHEIN prices, searches and orders. Writes go straight to Supabase.
+- Supabase Realtime publication covers deals, user_notifications, orders and shein_quotes, with RLS applied per user. New `device_tokens` table (own rows only).
+- Android: `RealtimeClient` (one WebSocket while the app is visible) writes changes into Room immediately. Polling now only runs while the socket is down, plus a catch-up after each reconnect.
+- FCM: data-only, high-priority pushes from the worker.
+  - Deals go to topics `deals_min_{10,30,50,70}` through topic conditions.
+  - Deals of 10–29% are batched into a summary every 5 minutes.
+  - Alerts, favourites and orders are sent to each user's own device tokens.
+  - Duplicates are prevented between Realtime and push.
+- CI: a `firebase` job (registers the app, outputs public ids) and a `latency` job (measured realtime delivery, FCM accept time and worker status), whose results go into the release issue.
