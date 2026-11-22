@@ -77,10 +77,16 @@ def main():
     fn = f"https://{ref}.supabase.co/functions/v1/scan"
     c = httpx.Client(timeout=60)
 
+    sent = {"n": 0}
+
     def probe(store, url, robots: Robots | None, why: str):
+        if sent["n"] >= 12 or sum(1 for r in RAW.get(store, []) if "skipped" not in r) >= 5:   # hard budget
+            RAW.setdefault(store, []).append({"url": url, "skipped": "budget reached", "why": why})
+            return None
         if robots is not None and not robots.ok(url):
             RAW.setdefault(store, []).append({"url": url, "skipped": "disallowed by robots.txt", "why": why})
             return None
+        sent["n"] += 1
         r = c.post(fn, headers={"x-cron-secret": secret}, json={"job": "probe", "url": url}).json()
         r["why"] = why
         RAW.setdefault(store, []).append(r)
@@ -91,43 +97,40 @@ def main():
         r = probe(store, f"{origin}/robots.txt", None, "robots.txt")
         return r, Robots(r.get("robots") if r and r.get("status") == 200 else None)
 
-    # Amazon
-    _, rb = robots_of("amazon", "https://www.amazon.eg")
-    home = probe("amazon", "https://www.amazon.eg/s?k=deals&language=en_AE", rb, "department list (search box)")
-    deps = (home or {}).get("amazonDepartmentSample") or []
-    dep = next((d for d in deps if d in ("electronics", "fashion", "kitchen", "beauty")), deps[1] if len(deps) > 1 else None)
-    if dep:
-        probe("amazon", f"https://www.amazon.eg/s?i={dep}&pct-off=30-&s=date-desc-rank&language=en_AE", rb, f"department deals page ({dep})")
-    probe("amazon", "https://www.amazon.eg/s?i=specialty-aps&pct-off=30-&s=date-desc-rank&language=en_AE&page=2", rb, "pagination (page 2)")
-    probe("amazon", "https://www.amazon.eg/deals?language=en_AE", rb, "Today's Deals page (JS-only?)")
+    # ── Follow-up probe (run once): pages the first run skipped by mistake + full robots.txt where it was cut at 4 KB.
+    # Budget ≤12 requests, ≤5 per store, ≥4 s apart, no retries. robots.txt already complete → read from tools/probe_cache.
+    def cached(store):
+        p = os.path.join(os.path.dirname(__file__), "probe_cache", f"{store}_robots.txt")
+        return Robots(open(p).read()) if os.path.exists(p) else None
 
-    # Noon
+    # Amazon (1): full robots.txt only
+    robots_of("amazon", "https://www.amazon.eg")
+
+    # Noon (5): full robots, homepage category links, one category page, its page 2, discount sort
     _, rb = robots_of("noon", "https://www.noon.com")
     probe("noon", "https://www.noon.com/egypt-en/", rb, "homepage category links")
-    probe("noon", "https://www.noon.com/egypt-en/electronics-and-mobiles/?limit=50&page=2", rb, "category pagination (page 2)")
-    probe("noon", "https://www.noon.com/egypt-en/electronics-and-mobiles/?sort[by]=discount_percent&sort[dir]=desc&limit=50", rb, "sort by discount")
-    sm = next((s for s in rb.sitemaps if "eg" in s.lower()), rb.sitemaps[0] if rb.sitemaps else None)
-    if sm:
-        probe("noon", sm, rb, "sitemap")
+    cat = "https://www.noon.com/egypt-en/electronics-and-mobiles/"
+    probe("noon", cat + "?limit=50", rb, "category page 1")
+    probe("noon", cat + "?limit=50&page=2", rb, "category page 2")
+    probe("noon", cat + "?sort[by]=discount_percent&sort[dir]=desc&limit=50", rb, "category sorted by discount")
 
-    # Jumia: robots only (Cloudflare blocks pages; nothing else is attempted)
-    robots_of("jumia", "https://www.jumia.com.eg")
+    # DeFacto (≤2): homepage + one sale/category link from it (robots cached, complete)
+    rb = cached("defacto")
+    h = probe("defacto", "https://www.defacto.com/en-eg", rb, "homepage")
+    sale = next((l for l in (h or {}).get("linkSample", []) if "/en-eg/" in l and any(w in l.lower() for w in ("sale", "outlet", "indirim", "discount", "offer", "firsat"))), None)
+    if sale:
+        probe("defacto", "https://www.defacto.com" + sale, rb, "sale page from homepage")
 
-    # DeFacto / LC Waikiki / Town Team
-    for store, origin, homepage in [("defacto", "https://www.defacto.com", "https://www.defacto.com/en-eg"),
-                                    ("lcwaikiki", "https://www.lcwaikiki.eg", "https://www.lcwaikiki.eg/en")]:
-        _, rb = robots_of(store, origin)
-        h = probe(store, homepage, rb, "homepage")
-        if rb.sitemaps:
-            probe(store, rb.sitemaps[0], rb, "sitemap")
-        sale = next((l for l in (h or {}).get("linkSample", []) if any(w in l.lower() for w in ("sale", "outlet", "indirim", "discount", "offer"))), None)
-        if sale:
-            probe(store, origin + sale, rb, "sale page")
-    for origin in ("https://townteam.com", "https://www.townteam.com.eg"):
-        r, rb = robots_of("townteam", origin)
-        if r and r.get("status") == 200 and not r.get("challenge"):
-            probe("townteam", origin + "/", rb, "homepage")
-            break
+    # LC Waikiki (2): full robots + homepage
+    _, rb = robots_of("lcwaikiki", "https://www.lcwaikiki.eg")
+    probe("lcwaikiki", "https://www.lcwaikiki.eg/en", rb, "homepage")
+
+    # Town Team (≤2): homepage + a sale collection page if linked (robots cached, complete)
+    rb = cached("townteam")
+    h = probe("townteam", "https://townteam.com/", rb, "homepage")
+    sale = next((l for l in (h or {}).get("linkSample", []) if l.startswith("/collections/") and any(w in l.lower() for w in ("sale", "offer", "discount", "clearance"))), None)
+    if sale:
+        probe("townteam", "https://townteam.com" + sale, rb, "sale collection from homepage")
 
     # report
     REPORT.append("### 🔎 فحص المتاجر لمرة واحدة (من سيرفر Supabase، ≤5 طلبات لكل متجر، 4 ث بين الطلبات)")
@@ -145,7 +148,9 @@ def main():
             if r.get("sitemapEntries") is not None: note.append(f"{r['sitemapEntries']} روابط في السايت ماب")
             if r.get("amazonDepartments"): note.append(f"{r['amazonDepartments']} قسم")
             if m: note.append(", ".join(f"{k}={v}" for k, v in m.items() if v))
-            REPORT.append(f"| {store} | {r['why']} | {r.get('status', '—')} | {r.get('bytes', 0) // 1024} KB | {'⛔' if r.get('challenge') else '—'} | {' · '.join(note)[:220]} |")
+            pz = r.get("parsed") or {}
+            if pz.get("items") is not None: note.append(f"parser: {pz['items']} منتج، {pz['deals10']} خصم ≥10%")
+            REPORT.append(f"| {store} | {r['why']} ({urlsplit(r.get('url','')).path or '/'}) | {r.get('status', '—')} | {r.get('bytes', 0) // 1024} KB | {'⛔' if r.get('challenge') else '—'} | {' · '.join(note)[:220]} |")
     REPORT.append(f"\nإجمالي الطلبات للمتاجر: {total}")
     text = "\n".join(REPORT)
     print(text)

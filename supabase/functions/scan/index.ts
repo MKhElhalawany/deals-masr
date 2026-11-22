@@ -1,7 +1,7 @@
 // 24/7 deal scanner on Supabase Edge Functions (free plan, no VM, no phone involved).
 // Called only by the database: pg_cron every 30 s per store, plus triggers for searches / SHEIN quotes / orders.
 // If the optional VM worker (server/worker) is alive, this function steps aside to avoid double work.
-import { amazonCandidates, Blocked, parseAmazonProduct, STORES } from "./parsers.ts";
+import { amazonCandidates, Blocked, generic, parseAmazonProduct, STORES } from "./parsers.ts";
 const checkedAsins = new Map<string, number>();   // product pages already checked (per isolate), avoid re-fetching
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
@@ -92,12 +92,14 @@ async function scanStore(store: string) {
   const targets: [string, string][] = [];
   if (store === "amazon") {   // Amazon rate-limits cloud IPs: one page per run, alternating deals page / keyword
     if (step % 2 === 0 || !kws.length) targets.push([spec.deals[0], "صفحة العروض"]);
-    else { const kw = kws[Math.floor(step / 2) % kws.length]; targets.push([spec.search(kw), kw]); }
+    else { const kw = kws[Math.floor(step / 2) % kws.length]; targets.push([spec.search!(kw), kw]); }
+  } else if (!spec.search) {  // category-only store (noon): two different category pages per run, same request rate as before
+    const n = spec.deals.length;
+    for (const i of n > 1 ? [step % n, (step + Math.floor(n / 2)) % n] : [0]) targets.push([spec.deals[i], "قسم " + new URL(spec.deals[i]).pathname.split("/").filter(Boolean).pop()]);
   } else {
     if (spec.deals.length) targets.push([spec.deals[step % spec.deals.length], "صفحة العروض"]);
     if (kws.length) { const kw = kws[step % kws.length]; targets.push([spec.search(kw), kw]); }
   }
-  if (spec.deals.length === 0 && kws.length > 1) { const kw = kws[(step + Math.floor(kws.length / 2)) % kws.length]; targets.push([spec.search(kw), kw]); }
   if (!targets.length) return { skipped: "no targets" };
   const label = targets.map((t) => t[1]).join(" + ");
   const t0 = Date.now();
@@ -155,11 +157,12 @@ async function runSearch(id: number) {
   if (!r || r.status !== "pending") return { skipped: true };
   await rest("PATCH", `search_requests?id=eq.${id}`, { status: "running" });
   const cfg = await config();
-  const stores = (r.stores?.length ? r.stores : cfg.scrape_stores ?? Object.keys(STORES)).filter((s: string) => STORES[s]);
+  // stores without a permitted search page (noon: robots.txt) are skipped; their categories are scanned on schedule
+  const stores = (r.stores?.length ? r.stores : cfg.scrape_stores ?? Object.keys(STORES)).filter((s: string) => STORES[s]?.search);
   let total = 0;
   await Promise.all(stores.map(async (s: string) => {
     try {
-      const [code, html] = await fetchPage(STORES[s].search(r.query));
+      const [code, html] = await fetchPage(STORES[s].search!(r.query));
       if (code !== 200) return;
       const res = await ingest(STORES[s].parse(html)[0]);
       total += res.accepted;
@@ -235,14 +238,21 @@ async function probe(url: string) {
     return { ...base, sitemapEntries: locs.length, sitemapSample: locs.slice(0, 15) };
   }
   const links = [...new Set([...html.matchAll(/href="(\/[^"#?]{2,120})"/g)].map((m) => m[1]))];
+  let parsed: unknown = null;   // what our existing parsers would extract from this page (no extra requests)
+  try {
+    const store = u.hostname.includes("noon") ? "noon" : u.hostname.includes("amazon") ? "amazon" : null;
+    const items = store ? STORES[store].parse(html)[0] : generic(html, "probe", `${u.protocol}//${u.hostname}/`);
+    const deals = items.filter((i) => i.original_price > i.current_price && (i.original_price - i.current_price) / i.original_price >= 0.1);
+    parsed = { items: items.length, deals10: deals.length, sample: deals.slice(0, 3).map((i) => `${i.title.slice(0, 50)} — ${i.current_price}/${i.original_price}`) };
+  } catch (e) { parsed = { error: String(e).slice(0, 120) }; }
   const dropdown = [...html.matchAll(/<option[^>]*value="search-alias=([a-z0-9-]+)"/gi)].map((m) => m[1]);
   return { ...base,
     markers: { amazonCards: count(/data-component-type="s-search-result"/g), amazonStrike: count(/a-text-price/g),
       noonProductLinks: count(/href="[^"]*\/p\//g), noonSalePrice: count(/sale_price/g), jumiaCards: count(/<article class="prd/g),
       jsonLdProduct: count(/"@type"\s*:\s*"Product"/g), strikeTags: count(/<(del|s)\b|line-through|class="[^"]*(old|was|strike)[^"]*"/gi),
       priceWords: count(/(EGP|ج\.م|جنيه)/g), nextData: html.includes("__NEXT_DATA__") || html.includes("self.__next_f") },
-    amazonDepartments: dropdown.length, amazonDepartmentSample: dropdown.slice(0, 60),
-    linkCount: links.length, linkSample: links.filter((l) => !/\.(js|css|png|jpg|svg|ico|woff)/.test(l)).slice(0, 40) };
+    parsed, amazonDepartments: dropdown.length, amazonDepartmentSample: dropdown.slice(0, 60),
+    linkCount: links.length, linkSample: links.filter((l) => !/\.(js|css|png|jpg|svg|ico|woff)/.test(l)).slice(0, 150) };
 }
 
 function sameSecret(a: string, b: string) {
@@ -264,7 +274,7 @@ Deno.serve(async (req) => {
       if (body.store === "amazon") await status("edge", true, `شغال ✓ ${new Date().toISOString().slice(11, 19)} UTC · Supabase Edge كل 20 ث · push ${pushEnabled() ? "on" : "off"}`);
     } else if (body.job === "debug") {   // CI diagnostics only (secret-protected): first product card of a store page
       const spec = STORES[String(body.store)];
-      const [code, html] = await fetchPage(spec.deals[0] ?? spec.search("headphones"));
+      const [code, html] = await fetchPage(spec.deals[0] ?? spec.search?.("headphones") ?? "");
       const marks = [...html.matchAll(/data-component-type="s-search-result"|<article class="prd|href="[^"]*\/p\//g)].map((m) => m.index!);
       const card = marks.length > 2 ? html.slice(marks[1], marks[2]) : html.slice(0, 60000);
       const bits = [...card.matchAll(/price|offscreen|strike|EGP|جنيه|%/gi)].slice(0, 25).map((m) => card.slice(Math.max(0, m.index! - 150), m.index! + 250).replace(/\s+/g, " "));

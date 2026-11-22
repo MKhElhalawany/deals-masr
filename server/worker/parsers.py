@@ -124,7 +124,15 @@ def noon_search_url(q: str, page: int = 1) -> str:
     return f"https://www.noon.com/egypt-ar/search/?q={quote_plus(q).replace('+', '%20')}" + (f"&page={page}" if page > 1 else "")
 
 
-NOON_DEAL_PAGES: list[str] = []
+# noon robots.txt disallows search pages → category pages only (temporary set, same as the edge scanner)
+NOON_DEAL_PAGES: list[str] = [
+    "https://www.noon.com/egypt-en/electronics-and-mobiles/?limit=50",
+    "https://www.noon.com/egypt-en/fashion/eg-fashion-men-cat/?limit=50",
+    "https://www.noon.com/egypt-en/fashion/eg-fashion-women-cat/?limit=50",
+    "https://www.noon.com/egypt-en/eg-fashion-footwear/?limit=50",
+    "https://www.noon.com/egypt-en/beauty/?limit=50",
+    "https://www.noon.com/egypt-en/sports-eg/?limit=50",
+]
 
 
 def _noon_id(url: str) -> str:
@@ -240,7 +248,7 @@ def _text(t) -> str:
 STORES = {
     "amazon": {"name": "أمازون مصر", "search": amazon_search_url, "parse": parse_amazon, "deals": AMAZON_DEAL_PAGES, "browser": False},
     "jumia": {"name": "جوميا مصر", "search": jumia_search_url, "parse": parse_jumia, "deals": JUMIA_DEAL_PAGES, "browser": False},
-    "noon": {"name": "نون مصر", "search": noon_search_url, "parse": parse_noon, "deals": NOON_DEAL_PAGES, "browser": True},
+    "noon": {"name": "نون مصر", "search": None, "parse": parse_noon, "deals": NOON_DEAL_PAGES, "browser": True},
 }
 
 

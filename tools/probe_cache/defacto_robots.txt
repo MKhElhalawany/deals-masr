@@ -1,0 +1,48 @@
+# www.DeFacto.com -- yenilen, eglen, tara.
+
+User-agent: *
+
+Disallow: *catalog*
+Disallow: *Catalog*
+Disallow: *shopping*
+Disallow: *Shopping*
+Disallow: /kampanyalar/
+Disallow: /maintenance.html
+Disallow: /en-tr/
+Disallow: /*fx_*
+Disallow: /*q=*
+Disallow: *gclid*
+Disallow: *bs=*
+Disallow: *==*
+Disallow: *k=*
+Disallow: *r=e*
+Disallow: /*onmouseover=*
+Disallow: /*SID=*
+Disallow: /*?BF&page=*
+Disallow: /*undefineddfcdn*
+Disallow: /aug&page=*
+Disallow: /*returnurl*
+Disallow: /*sortorder*
+Disallow: *search*
+Disallow: /*module*
+Disallow: /*filter=*
+Disallow: /*login*
+Disallow: /*Login*
+Disallow: /Product/ProductCombinationsByProductVariantIndex*
+Disallow: /Product/GetOrecoView*
+Disallow: /Product/GetDevisionView*
+Disallow: /*Product*
+Disallow: /app/
+Disallow: *gad_source=*
+
+User-agent: AdsBot-Google
+Disallow:
+
+Sitemap: https://www.defacto.com/sharedxml/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/en-ma/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/ar-ma/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/fr-ma/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/en-iq/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/ar-iq/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/ru-kz/sitemapindex.xml
+Sitemap: https://www.defacto.com/sharedxml/kk-kz/sitemapindex.xml

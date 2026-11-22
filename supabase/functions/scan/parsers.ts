@@ -94,8 +94,16 @@ export function parseJumia(html: string): [Item[], number] {
 }
 
 // ───────── noon Egypt (no browser here: server HTML + embedded JSON, best effort)
-export const noonSearch = (q: string) => `https://www.noon.com/egypt-ar/search/?q=${encodeURIComponent(q)}`;
-export const NOON_DEALS: string[] = [];
+// noon's robots.txt disallows search pages (/*/search/, /*/search?) for all crawlers → no noon search URLs at all.
+// Temporary coverage: a small set of category pages (allowed), page 1, 50 products each, until Phase 1.
+export const NOON_CATEGORIES: string[] = [
+  "https://www.noon.com/egypt-en/electronics-and-mobiles/?limit=50",
+  "https://www.noon.com/egypt-en/fashion/eg-fashion-men-cat/?limit=50",
+  "https://www.noon.com/egypt-en/fashion/eg-fashion-women-cat/?limit=50",
+  "https://www.noon.com/egypt-en/eg-fashion-footwear/?limit=50",
+  "https://www.noon.com/egypt-en/beauty/?limit=50",
+  "https://www.noon.com/egypt-en/sports-eg/?limit=50",
+];
 const noonId = (url: string) => {
   const seg = url.split("?")[0].replace(/\/$/, "").split("/");
   const i = seg.lastIndexOf("p");
@@ -185,8 +193,8 @@ export function generic(html: string, store: string, base: string, idOf = defaul
   return [...out.values()];
 }
 
-export const STORES: Record<string, { name: string; search: (q: string) => string; parse: (h: string) => [Item[], number]; deals: string[] }> = {
+export const STORES: Record<string, { name: string; search: ((q: string) => string) | null; parse: (h: string) => [Item[], number]; deals: string[] }> = {
   amazon: { name: "أمازون مصر", search: amazonSearch, parse: parseAmazon, deals: AMAZON_DEALS },
   jumia: { name: "جوميا مصر", search: jumiaSearch, parse: parseJumia, deals: JUMIA_DEALS },
-  noon: { name: "نون مصر", search: noonSearch, parse: parseNoon, deals: NOON_DEALS },
+  noon: { name: "نون مصر", search: null, parse: parseNoon, deals: NOON_CATEGORIES },
 };

@@ -39,3 +39,8 @@ Deno.test("amazon deal candidate + product page", async () => {
   assertEquals(m.amazonCandidates.map((c) => [c.asin, c.current]), [["B0X1", 745]]);
   assertEquals(parseAmazonProduct('<div id="corePriceDisplay_desktop_feature_div"><span class="priceToPay"><span class="a-offscreen">EGP 745.00</span></span><span class="basisPrice"><span class="a-price a-text-price"><span class="a-offscreen">EGP 1,199.00</span></span></span></div>'), { current: 745, list: 1199 });
 });
+Deno.test("noon: no search pages (robots.txt), category pages only", async () => {
+  const { STORES } = await import("./parsers.ts");
+  assertEquals(STORES.noon.search, null);
+  assertEquals(STORES.noon.deals.length > 0 && STORES.noon.deals.every((u) => u.startsWith("https://www.noon.com/egypt-en/") && !u.includes("/search")), true);
+});

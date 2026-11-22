@@ -80,7 +80,7 @@ class StoreLoop(threading.Thread):
         kws = self.cfg.get().get("scrape_keywords", [])
         deals = [(u, "صفحة العروض") for u in spec["deals"]]
         self.step_i += 1
-        if deals and (self.step_i % 2 == 1 or not kws):            # deal pages: every other step
+        if deals and (self.step_i % 2 == 1 or not kws or spec["search"] is None):   # deal/category pages (only these when no permitted search)
             return deals[(self.step_i // 2) % len(deals)]
         if not kws:
             return None
@@ -232,7 +232,7 @@ class QueueLoop(threading.Thread):
     def searches(self):
         for r in self.db.select("search_requests", "select=id,query,stores&status=eq.pending&order=created_at.asc&limit=3"):
             self.db.update("search_requests", f"id=eq.{r['id']}", {"status": "running"})
-            stores = [s for s in (r["stores"] or self.cfg.get().get("scrape_stores", list(STORES))) if s in STORES]
+            stores = [s for s in (r["stores"] or self.cfg.get().get("scrape_stores", list(STORES))) if s in STORES and STORES[s]["search"]]
             total = 0
             for s in stores:
                 try:
