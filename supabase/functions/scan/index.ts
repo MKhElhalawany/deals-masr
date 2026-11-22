@@ -9,7 +9,10 @@ const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const STORE_NAMES = Object.fromEntries(Object.entries(STORES).map(([k, v]) => [k, v.name]));
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const UAS = [
+  "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+];
 
 // ───────── PostgREST with the server key (key exists only as a function secret)
 async function rest(method: string, path: string, body?: unknown, prefer = "return=minimal"): Promise<any> {
@@ -38,11 +41,20 @@ async function vmAlive(): Promise<boolean> {
   return !!r[0] && Date.now() - Date.parse(r[0].last_run) < 120_000;
 }
 
+/** Mobile browser first, desktop as a second try if the store refuses or the connection drops. */
 async function fetchPage(url: string): Promise<[number, string]> {
-  const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(25_000), headers: {
-    "User-Agent": UA, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7" } });
-  return [r.status, await r.text()];
+  let last: [number, string] = [0, ""], err: unknown = null;
+  for (const ua of UAS) {
+    try {
+      const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000), headers: {
+        "User-Agent": ua, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ar-EG,ar;q=0.9,en-US;q=0.8,en;q=0.7" } });
+      last = [r.status, await r.text()];
+      if (![403, 429, 503].includes(r.status)) return last;
+    } catch (e) { err = e; }
+  }
+  if (!last[0] && err) throw err;
+  return last;
 }
 
 // ───────── deals in → DB (single RPC) → push
