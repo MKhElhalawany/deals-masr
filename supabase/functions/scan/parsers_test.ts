@@ -32,3 +32,10 @@ Deno.test("noon json", () => {
   const [items] = parseNoon(html);
   assertEquals([items.length, items[0]?.id, items[0]?.current_price, items[0]?.original_price], [1, "noon:N70099887V", 1500, 2000]);
 });
+Deno.test("amazon deal candidate + product page", async () => {
+  const { parseAmazon, parseAmazonProduct, amazonCandidates } = await import("./parsers.ts");
+  parseAmazon('<div data-asin="B0X1" data-component-type="s-search-result"><img class="s-image" src="https://m/1.jpg"><h2 aria-label="Pajama Set"></h2><span class="a-badge" data-a-badge-type="deal">Deal</span><span class="a-price"><span class="a-offscreen">EGP 745.00</span></span></div>');
+  const m = await import("./parsers.ts");
+  assertEquals(m.amazonCandidates.map((c) => [c.asin, c.current]), [["B0X1", 745]]);
+  assertEquals(parseAmazonProduct('<div id="corePriceDisplay_desktop_feature_div"><span class="priceToPay"><span class="a-offscreen">EGP 745.00</span></span><span class="basisPrice"><span class="a-price a-text-price"><span class="a-offscreen">EGP 1,199.00</span></span></span></div>'), { current: 745, list: 1199 });
+});

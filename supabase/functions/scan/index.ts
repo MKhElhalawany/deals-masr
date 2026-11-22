@@ -1,7 +1,8 @@
 // 24/7 deal scanner on Supabase Edge Functions (free plan, no VM, no phone involved).
 // Called only by the database: pg_cron every 30 s per store, plus triggers for searches / SHEIN quotes / orders.
 // If the optional VM worker (server/worker) is alive, this function steps aside to avoid double work.
-import { Blocked, STORES } from "./parsers.ts";
+import { amazonCandidates, Blocked, parseAmazonProduct, STORES } from "./parsers.ts";
+const checkedAsins = new Map<string, number>();   // product pages already checked (per isolate), avoid re-fetching
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
 
@@ -113,6 +114,23 @@ async function scanStore(store: string) {
       try { const [it, n] = spec.parse(html); items.push(...it); cards += n; } catch (e) { if (e instanceof Blocked) blockedCode = c || 403; else firstErr ??= e; }
     }
     if (!cards && blockedCode) throw new Blocked(`HTTP ${blockedCode}`);
+    // Amazon often shows "Deal" cards without the old price: verify ONE unseen candidate per run on its product page
+    if (store === "amazon" && amazonCandidates.length) {
+      const now = Date.now();
+      for (const [k, t] of checkedAsins) if (now - t > 6 * 3600_000) checkedAsins.delete(k);
+      const fresh = amazonCandidates.filter((c) => !checkedAsins.has(c.asin));
+      const known = fresh.length ? new Set((await select(`deals?select=id&id=in.(${fresh.map((c) => `"amazon:${c.asin}"`).join(",")})`)).map((r: any) => r.id)) : new Set();
+      const pick = fresh.find((c) => !known.has(`amazon:${c.asin}`));
+      if (pick) {
+        checkedAsins.set(pick.asin, now);
+        try {
+          const [pc, ph] = await fetchPage(`https://www.amazon.eg/dp/${pick.asin}?language=en_AE`);
+          const v = pc === 200 ? parseAmazonProduct(ph) : null;
+          if (v) items.push({ id: `amazon:${pick.asin}`, store: "amazon", title: pick.title, url: `https://www.amazon.eg/dp/${pick.asin}`,
+            image_url: pick.image_url, current_price: v.current, original_price: v.list });
+        } catch (_) { /* skip */ }
+      }
+    }
     if (!cards && firstErr) throw firstErr;
     const t2 = Date.now();
     const res = await ingest(items);

@@ -24,17 +24,33 @@ const doc = (html: string) => (parseHTML(html) as any).document;
 export const amazonSearch = (q: string) => `https://www.amazon.eg/s?k=${encodeURIComponent(q).replace(/%20/g, "+")}&pct-off=10-&language=en_AE`;
 export const AMAZON_DEALS = ["https://www.amazon.eg/s?i=specialty-aps&pct-off=30-&s=date-desc-rank&language=en_AE"];
 
+/** Cards Amazon marks as deals but shows without the crossed-out price (verified later on the product page). */
+export let amazonCandidates: { asin: string; title: string; image_url: string | null; current: number }[] = [];
+
+/** Product page: verified current price + list ("was") price. */
+export function parseAmazonProduct(html: string): { current: number; list: number } | null {
+  if (html.includes("validateCaptcha")) throw new Blocked("amazon captcha");
+  const d = doc(html);
+  const cur = price(txt(d.querySelector("#corePriceDisplay_desktop_feature_div .priceToPay .a-offscreen, .priceToPay .a-offscreen, #corePrice_feature_div .a-offscreen")));
+  const list = price(txt(d.querySelector("#corePriceDisplay_desktop_feature_div .basisPrice .a-offscreen, .basisPrice .a-text-price .a-offscreen, .a-price.a-text-price[data-a-strike=true] .a-offscreen")));
+  return cur && list && list > cur ? { current: cur, list } : null;
+}
+
 export function parseAmazon(html: string): [Item[], number] {
   if (html.includes("validateCaptcha") || html.includes("Type the characters you see")) throw new Blocked("amazon captcha");
   const d = doc(html);
   const cards = [...d.querySelectorAll('[data-component-type="s-search-result"]')];
   const out: Item[] = [];
+  amazonCandidates = [];
   for (const c of cards) {
     const asin = c.getAttribute("data-asin");
     const h2 = c.querySelector("h2");
     const title = ((h2?.getAttribute("aria-label")) || txt(h2)).trim();
     const cur = price(txt([...c.querySelectorAll(".a-price .a-offscreen")].find((e: any) => !e.parentElement?.classList.contains("a-text-price"))));
     const old = price(txt(c.querySelector(".a-price.a-text-price .a-offscreen"))) ?? price(txt(c.querySelector('[data-a-strike="true"] .a-offscreen')));
+    if (asin && title && cur && !old && c.querySelector("[data-a-badge-type=deal], .a-badge")) {
+      amazonCandidates.push({ asin, title, image_url: c.querySelector("img.s-image")?.getAttribute("src") ?? null, current: cur });
+    }
     if (!asin || !title || !cur || !old) continue;
     const rating = price(txt(c.querySelector("span.a-icon-alt")));
     const cnt = [...c.querySelectorAll("a[href*=customerReviews] span, span.s-underline-text")].map((e: any) => price(txt(e))).find((x) => x);
