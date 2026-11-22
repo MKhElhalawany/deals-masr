@@ -361,7 +361,9 @@ Deno.serve(async (req) => {
       if (String(body.store) === "noon") {   // noon product data: what surrounds the first two "sale_price" fields
         const t = html.replace(/\\+"/g, '"');
         const idx = [...t.matchAll(/sale_price/g)].map((m) => m.index!).slice(0, 2);
-        out = { code, length: html.length, sample: idx.map((i) => t.slice(Math.max(0, i - 2500), i + 1200)).join("\n=====\n") };
+        const title = html.match(/<title[^>]*>([^<]{0,160})/i)?.[1] ?? "";
+        out = { code, length: html.length, sample: idx.length ? idx.map((i) => t.slice(Math.max(0, i - 2500), i + 1200)).join("\n=====\n")
+          : `NO sale_price · title="${title}" · /p/ links=${(html.match(/\/p\//g) ?? []).length} · price words=${(html.match(/EGP|ج\.م/g) ?? []).length} · scripts=${(html.match(/<script/g) ?? []).length}\n` + html.slice(html.indexOf("<body"), html.indexOf("<body") + 3000) };
         return Response.json(out);
       }
       const card = marks.length > 2 ? html.slice(marks[1], marks[2]) : html.slice(0, 60000);
