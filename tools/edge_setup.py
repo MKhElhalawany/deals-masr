@@ -142,6 +142,27 @@ create trigger call_scan after insert or update of status on public.orders for e
             print(f"debug {s} failed: {e}")
     OUT.append(f"\nمتاجر شغالة فعلاً من سيرفر Supabase: **{working}/{len(STORES)}**. "
                "أقصى تأخير للاكتشاف ≈ 20 ث (دورة الفحص) + زمن الصفحة؛ صفحة عروض أمازون بتتراجع كل 20 ث.")
+    # 5) real database write rates over 3 minutes with the scanner running (no extra store requests)
+    q_stats = ("select relname as t, n_tup_ins as ins, n_tup_upd as upd, n_tup_del as del from pg_stat_user_tables "
+               "where schemaname = 'public' and relname in ('deals','deal_seen','price_history','user_notifications')")
+    try:
+        a = {r["t"]: r for r in S.sql(ref, q_stats)}
+        t0 = time.time()
+        time.sleep(180)
+        b = {r["t"]: r for r in S.sql(ref, q_stats)}
+        mins = (time.time() - t0) / 60
+        sizes = {r["t"]: r for r in S.sql(ref, "select relname as t, n_live_tup as rows, pg_total_relation_size(relid) as bytes "
+                                               "from pg_stat_user_tables where schemaname='public' and relname in ('deals','deal_seen','price_history')")}
+        OUT.append("\n### 🗄️ معدل الكتابة الفعلي في قاعدة البيانات (3 دقايق)")
+        OUT.append("| الجدول | إضافة/دقيقة | تعديل/دقيقة | صفوف | الحجم |\n|---|---|---|---|---|")
+        for t in ("deals", "deal_seen", "price_history", "user_notifications"):
+            if t in a and t in b:
+                ins = (int(b[t]["ins"]) - int(a[t]["ins"])) / mins
+                upd = (int(b[t]["upd"]) - int(a[t]["upd"])) / mins
+                sz = sizes.get(t, {})
+                OUT.append(f"| {t} | {ins:.1f} | {upd:.1f} | {sz.get('rows', '')} | {int(sz.get('bytes', 0)) // 1024} KB |")
+    except Exception as e:
+        OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
     text = "\n".join(OUT)
     print(text)
     out("report", text)

@@ -156,6 +156,18 @@ def fcm():
     out.append("وصوله للموبايل نفسه بيعتمد على Google والشبكة (عادةً أقل من ثانية للأولوية العالية) — ده ما ينفعش يتقاس من غير جهاز حقيقي.")
 
 
+def sync_sizes():
+    """Bytes a phone downloads: full snapshot (old way, 400 rows) vs incremental changes of the last 15 minutes."""
+    cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,rating,rating_count,active,deal_since,last_checked,updated_at"
+    h = svc_headers()
+    full = httpx.get(f"{URL}/rest/v1/deals?select={cols}&active=eq.true&order=discount_pct.desc&limit=400", headers=h, timeout=30)
+    since = (datetime.now(timezone.utc).timestamp() - 900)
+    iso = datetime.fromtimestamp(since, timezone.utc).isoformat().replace("+00:00", "Z")
+    inc = httpx.get(f"{URL}/rest/v1/deals?select={cols}&updated_at=gt.{iso}&order=updated_at.asc&limit=500", headers=h, timeout=30)
+    out.append("\n### 📶 حجم المزامنة على الموبايل")
+    out.append(f"لقطة كاملة (400 عرض): {len(full.content) / 1024:.0f} KB · تغييرات آخر 15 دقيقة: {len(inc.json())} عرض = {len(inc.content) / 1024:.1f} KB")
+
+
 def worker_status():
     out.append("\n### 🛰️ السيرفر (اكتشاف العروض)")
     rows = httpx.get(f"{URL}/rest/v1/scraper_status?select=store,ok,message,last_run", headers=svc_headers(), timeout=20).json()
@@ -177,7 +189,7 @@ async def main():
     except Exception as e:
         ok = False
         out.append(f"### ⚡ Realtime\n❌ فشل القياس: {type(e).__name__}: {e}")
-    for fn in (fcm, worker_status):
+    for fn in (fcm, sync_sizes, worker_status):
         try:
             fn()
         except Exception as e:
