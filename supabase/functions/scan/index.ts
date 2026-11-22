@@ -190,6 +190,11 @@ Deno.serve(async (req) => {
     else if (body.job === "scan") {
       out = await scanStore(String(body.store));
       if (body.store === "amazon") await status("edge", true, `شغال ✓ ${new Date().toISOString().slice(11, 19)} UTC · Supabase Edge كل 30 ث · push ${pushEnabled() ? "on" : "off"}`);
+    } else if (body.job === "debug") {   // CI diagnostics only (secret-protected): first product card of a store page
+      const spec = STORES[String(body.store)];
+      const [code, html] = await fetchPage(spec.deals[0] ?? spec.search("headphones"));
+      const i = html.search(/s-search-result|article class="prd|\/p\//);
+      out = { code, length: html.length, sample: i >= 0 ? html.slice(i, i + 6000) : html.slice(0, 3000) };
     } else if (body.job === "search") out = await runSearch(Number(body.id));
     else if (body.job === "shein") out = await runShein(Number(body.id));
     else out = { error: "unknown job" };
