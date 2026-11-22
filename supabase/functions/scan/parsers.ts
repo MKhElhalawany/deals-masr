@@ -117,7 +117,7 @@ export function parseNoon(html: string): [Item[], number] {
   // Prices ONLY from noon's embedded product data (price / sale_price). The layout-based detector misread
   // ranks and model numbers ("#18", "10K") as prices, so it is no longer used for noon.
   const items = noonJson(html);
-  const cards = (html.match(/"sale_price"/g) ?? []).length || (html.match(/href="[^"]*\/p\//g) ?? []).length;
+  const cards = (html.match(/sale_price/g) ?? []).length || (html.match(/href="[^"]*\/p\//g) ?? []).length;
   return [items, Math.max(cards, items.length)];
 }
 
@@ -125,7 +125,7 @@ export function parseNoon(html: string): [Item[], number] {
 export function noonJson(html: string): Item[] {
   const out = new Map<string, Item>();
   const re = /\{[^{}]*?"sku"\s*:\s*"([A-Z0-9]{6,})"[^{}]*?\}/g;
-  for (const m of html.replace(/\\"/g, '"').matchAll(re)) {
+  for (const m of html.replace(/\\+"/g, '"').matchAll(re)) {
     const o = m[0];
     const name = o.match(/"name"\s*:\s*"([^"]{4,300})"/)?.[1];
     const p = parseFloat(o.match(/"price"\s*:\s*"?([\d.]+)/)?.[1] ?? "");
