@@ -111,6 +111,7 @@ create trigger call_scan after insert or update of status on public.orders for e
     OUT.append("| المتجر | HTTP | منتجات اتقرت | عروض اتحفظت | تحميل الصفحة | حفظ | الإجمالي |\n|---|---|---|---|---|---|---|")
     c = httpx.Client(timeout=90)
     working = 0
+    diag: list[str] = []
     for s in STORES:
         t = time.perf_counter()
         try:
@@ -119,19 +120,23 @@ create trigger call_scan after insert or update of status on public.orders for e
             j = r.json() if r.headers.get("content-type", "").startswith("application/json") else {"error": f"HTTP {r.status_code}"}
         except Exception as e:
             total, j = 0, {"error": str(e)}
+        if "skipped" in j or "error" in j:
+            diag.append(s)
         if "skipped" in j:
             OUT.append(f"| {s} | — | اتخطى: {j['skipped']} | | | | |")
         elif "error" in j:
             OUT.append(f"| {s} | ❌ | {str(j['error'])[:80]} | | | | |")
         else:
             working += 1 if j.get("cards") else 0
-            if j.get("cards") and not j.get("accepted"):   # page read but no deals parsed → print a sample card for diagnosis
-                try:
-                    d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json={"job": "debug", "store": s}).json()
-                    print(f"::group::{s} sample (HTTP {d.get('code')}, {d.get('length')} bytes)\n{d.get('sample', '')}\n::endgroup::")
-                except Exception as e:
-                    print(f"debug {s} failed: {e}")
+            if j.get("cards") and not j.get("accepted"):
+                diag.append(s)
             OUT.append(f"| {s} | {j.get('code')} | {j.get('cards')} | {j.get('accepted')} | {j.get('fetch_ms')} ms | {j.get('save_ms')} ms | {total:.0f} ms |")
+    for s in diag:   # page refused / read without deals → print what the store returned (product HTML only) for diagnosis
+        try:
+            d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json={"job": "debug", "store": s}).json()
+            print(f"::group::{s} sample (HTTP {d.get('code')}, {d.get('length')} bytes)\n{d.get('sample', '')}\n::endgroup::")
+        except Exception as e:
+            print(f"debug {s} failed: {e}")
     OUT.append(f"\nمتاجر شغالة فعلاً من سيرفر Supabase: **{working}/{len(STORES)}**. "
                "أقصى تأخير للاكتشاف ≈ 30 ث (دورة الفحص) + زمن الصفحة؛ صفحة العروض بتتراجع كل ~60 ث.")
     text = "\n".join(OUT)
