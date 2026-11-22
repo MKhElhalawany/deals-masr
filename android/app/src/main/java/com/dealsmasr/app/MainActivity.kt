@@ -24,7 +24,6 @@ import com.dealsmasr.app.ui.AppNav
 import com.dealsmasr.app.ui.ExternalNav
 import com.dealsmasr.app.ui.theme.DealsTheme
 import com.dealsmasr.app.work.DealAlerts
-import com.dealsmasr.app.work.LiveScanService
 import com.dealsmasr.app.work.Notifier
 import com.dealsmasr.app.work.OrderEvents
 import com.dealsmasr.app.data.auth.AuthState
@@ -41,17 +40,14 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) handleIntent(intent)
         val container = (application as DealsApp).container
         DealAlerts.resetSummary()
-        lifecycleScope.launch {
-            val s = container.settings.current()
-            if (s.liveScan && !s.hasServer) LiveScanService.start(this@MainActivity)
-        }
-        // While the app is visible: refresh deals every 10 minutes.
+        // While the app is visible: pull new deals from our server every minute.
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 var tick = 0
                 while (true) {
                     if (container.auth.isSignedIn) {
-                        runCatching { container.deals.refreshIfDue(10 * 60_000L) }
+                        // read-only sync of what the server found (incremental, tiny)
+                        runCatching { container.deals.refresh() }
                         // every 2 minutes: order confirmations (customers) / new orders (admin)
                         if (tick % 2 == 0) runCatching { OrderEvents.check(this@MainActivity, container) }
                     }

@@ -14,7 +14,3 @@
 -dontwarn okhttp3.internal.platform.**
 -dontwarn org.conscrypt.**
 
-# jsoup
--keep class org.jsoup.** { *; }
--dontwarn org.jspecify.annotations.**
--dontwarn com.google.re2j.**

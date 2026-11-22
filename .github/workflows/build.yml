@@ -31,12 +31,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HAS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN != '' }}
+          HAS_SERVER: ${{ secrets.SERVER_HOST != '' && secrets.SERVER_SSH_KEY != '' }}
         run: |
           if [ "$GITHUB_EVENT_NAME" != "schedule" ]; then echo "go=true" >> "$GITHUB_OUTPUT"; exit 0; fi
           go=false
           if [ "$HAS_TOKEN" = "true" ]; then
             latest=$(gh release view --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)
-            if ! echo "$latest" | grep -q "connected:$GITHUB_SHA"; then
+            deployed=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/worker-deployed" -q .object.sha 2>/dev/null || true)
+            need=false
+            echo "$latest" | grep -q "connected:$GITHUB_SHA" || need=true
+            [ "$HAS_SERVER" = "true" ] && [ "$deployed" != "$GITHUB_SHA" ] && need=true
+            if [ "$need" = "true" ]; then
               # don't hammer a failing setup: retry at most once an hour
               recent=$(gh issue list --repo "$GITHUB_REPOSITORY" --label pipeline-failure --state open --json updatedAt \
                 -q '[.[] | select((now - (.updatedAt | fromdateiso8601)) < 3300)] | length' 2>/dev/null || echo 0)
@@ -45,6 +50,30 @@ jobs:
           fi
           echo "go=$go" >> "$GITHUB_OUTPUT"
           echo "scheduled check → go=$go"
+
+  # The Android app must never scrape: fail the build if scraping code appears in it.
+  no-device-scraping:
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tools/check_no_device_scraping.sh
+
+  worker-tests:
+    needs: plan
+    if: needs.plan.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - working-directory: server/worker
+        run: |
+          pip install -q httpx beautifulsoup4 pytest
+          python -m pytest -q tests
+      - name: Worker image builds
+        run: docker build -q -t deals-worker server/worker
 
   backend:
     needs: plan
@@ -91,9 +120,53 @@ jobs:
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: python3 tools/supabase_setup.py
 
+  # Deploys the 24/7 scraping worker to the server (Oracle Cloud Always Free VM) when SERVER_HOST + SERVER_SSH_KEY exist.
+  deploy-worker:
+    needs: [supabase, worker-tests]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.d.outputs.result }}
+      detail: ${{ steps.d.outputs.detail }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: d
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          PROXY_URL: ${{ secrets.PROXY_URL }}
+        run: |
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_SSH_KEY" ]; then
+            echo "result=no-server" >> "$GITHUB_OUTPUT"; echo "::notice::No server yet (SERVER_HOST / SERVER_SSH_KEY secrets)."; exit 0
+          fi
+          USER_AT="${SERVER_USER:-ubuntu}@$SERVER_HOST"
+          umask 077; mkdir -p ~/.ssh
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_server
+          WORKER_ENV_FILE=$RUNNER_TEMP/worker.env python3 tools/supabase_setup.py
+          [ -n "$PROXY_URL" ] && echo "PROXY_URL=$PROXY_URL" >> "$RUNNER_TEMP/worker.env"
+          SSH="ssh -i $HOME/.ssh/id_server -o StrictHostKeyChecking=accept-new -o ConnectTimeout=20"
+          set +e
+          scp -q -i ~/.ssh/id_server -o StrictHostKeyChecking=accept-new "$RUNNER_TEMP/worker.env" "$USER_AT:deals-worker.env" \
+            && $SSH "$USER_AT" 'chmod 600 ~/deals-worker.env && bash -s' < server/deploy.sh > "$RUNNER_TEMP/deploy.log" 2>&1
+          rc=$?
+          set -e
+          rm -f "$RUNNER_TEMP/worker.env" ~/.ssh/id_server
+          cat "$RUNNER_TEMP/deploy.log"
+          if [ $rc -ne 0 ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "detail=$(tail -3 "$RUNNER_TEMP/deploy.log" | tr '\n' ' ' | cut -c1-300)" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "result=deployed" >> "$GITHUB_OUTPUT"
+          # marker so the 15-minute check knows this commit is running on the server
+          GH_TOKEN=${{ github.token }} gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/worker-deployed" -f sha="$GITHUB_SHA" -F force=true >/dev/null 2>&1 \
+            || GH_TOKEN=${{ github.token }} gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/worker-deployed -f sha="$GITHUB_SHA" >/dev/null
+
   android:
-    needs: [backend, supabase]
-    if: always() && needs.backend.result == 'success' && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
+    needs: [backend, supabase, no-device-scraping]
+    if: always() && needs.backend.result == 'success' && needs.no-device-scraping.result == 'success' && (needs.supabase.result == 'success' || needs.supabase.result == 'skipped')
     runs-on: ubuntu-latest
     outputs:
       apk: ${{ steps.publish.outputs.apk }}
@@ -133,7 +206,7 @@ jobs:
           echo "apk=https://github.com/${{ github.repository }}/releases/download/$TAG/DealsMasr.apk" >> "$GITHUB_OUTPUT"
 
   report:
-    needs: [plan, backend, supabase-sql, supabase, android]
+    needs: [plan, backend, supabase-sql, supabase, android, no-device-scraping, worker-tests, deploy-worker]
     if: always() && needs.plan.outputs.go == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -145,6 +218,11 @@ jobs:
           R_SQL: ${{ needs.supabase-sql.result }}
           R_SUPABASE: ${{ needs.supabase.result }}
           R_ANDROID: ${{ needs.android.result }}
+          R_GUARD: ${{ needs.no-device-scraping.result }}
+          R_WORKER_TESTS: ${{ needs.worker-tests.result }}
+          R_DEPLOY: ${{ needs.deploy-worker.result }}
+          DEPLOY_RESULT: ${{ needs.deploy-worker.outputs.result }}
+          DEPLOY_DETAIL: ${{ needs.deploy-worker.outputs.detail }}
           SUPABASE_ERROR: ${{ needs.supabase.outputs.error }}
           APK: ${{ needs.android.outputs.apk }}
           CONNECTED: ${{ needs.android.outputs.connected }}

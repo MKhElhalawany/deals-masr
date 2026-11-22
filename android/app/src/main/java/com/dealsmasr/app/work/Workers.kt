@@ -40,7 +40,6 @@ object Notifier {
         nm.createNotificationChannel(NotificationChannel(CH_DEALS, ctx.getString(R.string.channel_deals), NotificationManager.IMPORTANCE_DEFAULT))
         nm.createNotificationChannel(NotificationChannel(CH_ORDERS, ctx.getString(R.string.channel_orders), NotificationManager.IMPORTANCE_DEFAULT))
         DealAlerts.createChannels(ctx)
-        LiveScanService.createChannel(ctx)
     }
 
     fun canNotify(ctx: Context): Boolean =
@@ -69,36 +68,23 @@ object Notifier {
     }
 }
 
-/** Periodic (every 15 min, Android's minimum): refresh deal snapshot, re-verify favourites, run user alerts, fetch major-deal events. */
+/** Periodic (every 15 min): fetch what the server found, re-verify favourites, run user alerts, fetch major-deal events. */
 class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
     override suspend fun doWork(): Result {
         val c = (applicationContext as DealsApp).container
+        if (!c.auth.isSignedIn) return Result.success()
         val s = c.settings.current()
         return try {
-            // The live monitor (if on) already covers deal discovery; this is the fallback every 15 min.
-            val fresh = if (s.liveScan && !s.hasServer) emptyList() else c.deals.refreshIfDue(10 * 60_000L)
-            if (s.notificationsEnabled) DealAlerts.notify(applicationContext, fresh, s.notifyMinPct)
-            if (c.auth.isSignedIn) runCatching { OrderEvents.check(applicationContext, c) }
+            // Only READS from our server (Supabase); all store scraping happens on the 24/7 server.
+            val events = c.deals.refresh()
             if (s.notificationsEnabled) {
-                c.deals.refreshFavorites().take(3).forEach { d ->
-                    Notifier.show(applicationContext, d.favorite.productId.hashCode(), Notifier.CH_DEALS,
-                        "نزل السعر! ${Money.egp(d.newPrice)}", d.favorite.title, "product/${d.favorite.productId}")
+                DealAlerts.notify(applicationContext, events, s.notifyMinPct)
+                c.deals.serverNotifications().forEach { n ->
+                    Notifier.show(applicationContext, ("sn" + n.id).hashCode(), Notifier.CH_DEALS, n.title, n.body,
+                        n.dealId?.let { "product/$it" })
                 }
-                c.deals.checkAlerts().forEach { (alert, items) ->
-                    val best = items.maxBy { it.discountPct }
-                    Notifier.show(applicationContext, ("alert" + alert.id).hashCode(), Notifier.CH_DEALS,
-                        "تنبيه: ${alert.query} بخصم ${best.discountPct.toInt()}%",
-                        "${best.title} — ${Money.egp(best.currentPrice)} (${items.size} عرض جديد)", "product/${best.id}")
-                }
-                if (s.majorDealAlerts) {
-                    c.deals.majorDealNotifications().take(3).forEach { n ->
-                        Notifier.show(applicationContext, ("n" + n.id).hashCode(), Notifier.CH_DEALS, n.title, n.body,
-                            n.productId?.let { "product/$it" })
-                    }
-                }
-            } else {
-                c.deals.refreshFavorites()
             }
+            runCatching { OrderEvents.check(applicationContext, c) }
             Result.success()
         } catch (e: Exception) {
             if (runAttemptCount < 3) Result.retry() else Result.failure()

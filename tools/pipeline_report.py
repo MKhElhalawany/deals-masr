@@ -43,12 +43,14 @@ def main():
     ensure_label("pipeline-failure", "d73a4a")
     ensure_label("app-release", "0e8a16")
     results = {"اختبارات الخادم": E("R_BACKEND"), "اختبارات أمان قاعدة البيانات": E("R_SQL"),
-               "تجهيز Supabase": E("R_SUPABASE"), "بناء التطبيق": E("R_ANDROID")}
+               "تجهيز Supabase": E("R_SUPABASE"), "بناء التطبيق": E("R_ANDROID"),
+               "التأكد إن التطبيق مفيهوش سكرابنج": E("R_GUARD"), "اختبارات سيرفر العروض": E("R_WORKER_TESTS"),
+               "تشغيل سيرفر العروض": E("R_DEPLOY")}
     failed = [k for k, v in results.items() if v == "failure"]
     run = E("RUN_URL")
 
     if failed:
-        reason = E("SUPABASE_ERROR") or "تفاصيل الخطأ في صفحة التشغيل."
+        reason = E("SUPABASE_ERROR") or (f"السيرفر: {E('DEPLOY_DETAIL')}" if E("DEPLOY_DETAIL") else "") or "تفاصيل الخطأ في صفحة التشغيل."
         body = (f"**اللي وقف:** {'، '.join(failed)}\n\n**السبب:** {reason}\n\n"
                 f"هنحاول تاني تلقائياً كل ساعة. لو السبب في التوكن، اعمل توكن جديد وحطه مكان `SUPABASE_ACCESS_TOKEN`.\n\n"
                 f"[تفاصيل التشغيل]({run})\n\n<sub>Failed: {', '.join(f'{k}={v}' for k, v in results.items())}</sub>")
@@ -68,7 +70,10 @@ def main():
                      f"اكتب إيميل حساب Supabase بتاعك ({owner}) ← افتح الرسالة اللي هتوصلك على نفس الموبايل واضغط اللينك. خلاص.")
         elif not owner:
             admin = "\n\nمقدرناش نعرف إيميلك من Supabase. ضيف Secret اسمه `ADMIN_EMAIL` فيه إيميلك."
-        body = (f"## ✅ النسخة الجديدة جاهزة\n\n**نزّلها من هنا:** {E('APK')}\n\n"
+        server = ("\n\n**سيرفر العروض:** ✅ شغال 24 ساعة وبيحدّث العروض." if E("DEPLOY_RESULT") == "deployed" else
+                  "\n\n**سيرفر العروض:** ⏳ لسه مش متجهز — اتبع docs/SERVER_SETUP.md (خطوة واحدة: سيرفر Oracle المجاني). "
+                  "لحد ما يشتغل، التطبيق هيعرض العروض اللي في قاعدة البيانات بس.")
+        body = (f"## ✅ النسخة الجديدة جاهزة\n\n**نزّلها من هنا:** {E('APK')}{server}\n\n"
                 f"قاعدة البيانات وتسجيل الدخول والأمان اتجهزوا واتختبروا تلقائياً.{admin}\n\n[تفاصيل التشغيل]({run})")
         upsert_issue("app-release", RELEASE_TITLE, body)
         print("reported release")

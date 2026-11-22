@@ -280,7 +280,35 @@ def smoke_test(url, key):
     return email
 
 
+def write_worker_env(path: str):
+    """For deployment only: write the worker's env file (URL + server-only secret key), masked in logs, mode 600."""
+    projects = [p for p in api("GET", "/projects") or [] if p["name"] == PROJECT_NAME]
+    if not projects:
+        fail("Supabase project not found — the setup job must succeed first.")
+    ref = projects[0]["ref"]
+    status, keys = http("GET", f"{API}/projects/{ref}/api-keys?reveal=true", headers={"Authorization": f"Bearer {TOKEN}"})
+    keys = keys if status < 400 and isinstance(keys, list) else []
+    secret = next((k["api_key"] for k in keys if k.get("type") == "secret" and k.get("api_key")), None)
+    if secret is None:  # create a dedicated secret key for the worker
+        st, created = http("POST", f"{API}/projects/{ref}/api-keys?reveal=true", {"type": "secret", "name": "worker"},
+                           {"Authorization": f"Bearer {TOKEN}"})
+        secret = created.get("api_key") if st < 400 and isinstance(created, dict) else None
+    if secret is None:
+        secret = next((k["api_key"] for k in keys if k.get("name") == "service_role" and k.get("api_key")), None)
+    if not secret:
+        fail("Could not get a server key for the worker (token needs 'API key secrets: read').")
+    print(f"::add-mask::{secret}", flush=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(f"SUPABASE_URL=https://{ref}.supabase.co\nSUPABASE_SERVICE_KEY={secret}\n")
+    log("Worker env prepared ✓ (secret masked, file mode 600)")
+
+
 def main():
+    if os.environ.get("WORKER_ENV_FILE"):
+        if not TOKEN:
+            fail("SUPABASE_ACCESS_TOKEN missing")
+        return write_worker_env(os.environ["WORKER_ENV_FILE"])
     if not TOKEN:
         log("::notice::SUPABASE_ACCESS_TOKEN secret not set — skipping Supabase setup (APK will show 'not connected').")
         return

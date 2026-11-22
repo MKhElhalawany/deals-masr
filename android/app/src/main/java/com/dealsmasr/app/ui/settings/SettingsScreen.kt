@@ -1,11 +1,7 @@
 package com.dealsmasr.app.ui.settings
 
 import android.Manifest
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
-import androidx.core.content.FileProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -27,12 +23,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,11 +43,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dealsmasr.app.core.Money
 import com.dealsmasr.app.data.ThemeMode
+import com.dealsmasr.app.data.auth.AuthState
 import com.dealsmasr.app.data.remote.MarketplaceDto
 import com.dealsmasr.app.ui.appContainer
+import com.dealsmasr.app.ui.components.relativeTime
 import com.dealsmasr.app.ui.components.userMessage
-import com.dealsmasr.app.work.LiveScanService
-import com.dealsmasr.app.data.auth.AuthState
 import com.dealsmasr.app.work.Notifier
 import kotlinx.coroutines.launch
 import java.math.BigDecimal
@@ -66,78 +60,37 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
     val ctx = LocalContext.current
     val s by c.settings.settings.collectAsStateWithLifecycle(null)
     val alerts by c.deals.alerts.collectAsStateWithLifecycle(emptyList())
-    var url by remember { mutableStateOf<String?>(null) }
-    var markets by remember { mutableStateOf<List<MarketplaceDto>?>(null) }
-    var testMsg by remember { mutableStateOf<String?>(null) }
-    var keywords by remember { mutableStateOf<String?>(null) }
-    var refreshing by remember { mutableStateOf(false) }
-    var refreshMsg by remember { mutableStateOf<String?>(null) }
-    var pages by remember { mutableStateOf<String?>(null) }
-    var diagBusy by remember { mutableStateOf<String?>(null) }
-    fun shareDiagnostic(store: String) {
-        if (diagBusy != null) return
-        diagBusy = store
-        scope.launch {
-            runCatching { c.deals.local.diagnosticPage(store) }
-                .onSuccess { f ->
-                    val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
-                    val i = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_STREAM, uri)
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    ctx.startActivity(Intent.createChooser(i, "إرسال صفحة التشخيص"))
-                }
-                .onFailure { refreshMsg = it.userMessage() }
-            diagBusy = null
-        }
-    }
+    val authState by c.auth.state.collectAsStateWithLifecycle()
+    var health by remember { mutableStateOf<List<MarketplaceDto>?>(null) }
+    var healthError by remember { mutableStateOf<String?>(null) }
     val permLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         scope.launch { c.settings.setNotifications(granted) }
     }
-
-    LaunchedEffect(s?.serverUrl) { if (url == null && s != null) url = s!!.serverUrl }
-
-    fun test() = scope.launch {
-        testMsg = "جاري الاختبار…"
-        c.settings.setServerUrl(url.orEmpty())
-        runCatching { c.deals.marketplaces() }
-            .onSuccess { markets = it; testMsg = "تم الاتصال ✓"; runCatching { c.deals.refresh() } }
-            .onFailure { markets = null; testMsg = it.userMessage() }
+    val isAdmin = (authState as? AuthState.SignedIn)?.profile?.isAdmin == true
+    fun loadHealth() = scope.launch {
+        runCatching { c.deals.marketplaces() }.onSuccess { health = it; healthError = null }.onFailure { healthError = it.userMessage() }
     }
+    LaunchedEffect(isAdmin) { if (isAdmin) loadHealth() }
 
     Scaffold(topBar = {
         TopAppBar(title = { Text("الإعدادات") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
     }) { pad ->
         val st = s ?: return@Scaffold
-        val authState by c.auth.state.collectAsStateWithLifecycle()
         Column(Modifier.padding(pad).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             (authState as? AuthState.SignedIn)?.let { a ->
                 Section("حسابي") {
                     Text(a.profile.fullName ?: "—", fontWeight = FontWeight.SemiBold)
                     Text(listOfNotNull(a.email, a.profile.phone).joinToString(" · "), style = MaterialTheme.typography.bodySmall)
                     if (a.profile.isAdmin) Button(onClick = onAdminOrders, modifier = Modifier.fillMaxWidth()) { Text("إدارة الطلبات (أدمن)") }
-                    OutlinedButton(onClick = { scope.launch { LiveScanService.stop(ctx); c.auth.signOut() } }) { Text("تسجيل الخروج") }
+                    OutlinedButton(onClick = { scope.launch { c.auth.signOut() } }) { Text("تسجيل الخروج") }
                 }
             }
-            if (!st.hasServer) Section("تنبيهات العروض الفورية") {
-                Toggle("نبهني بأي عرض جديد أول ما ينزل", st.liveScan) { on ->
-                    scope.launch {
-                        c.settings.setLiveScan(on)
-                        if (on) {
-                            if (Build.VERSION.SDK_INT >= 33 && !Notifier.canNotify(ctx)) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            LiveScanService.start(ctx)
-                        } else LiveScanService.stop(ctx)
-                    }
+            Section("الإشعارات") {
+                Toggle("نبهني بالعروض الجديدة", st.notificationsEnabled) { on ->
+                    if (on && Build.VERSION.SDK_INT >= 33 && !Notifier.canNotify(ctx)) permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    else scope.launch { c.settings.setNotifications(on) }
                 }
-                if (st.adminMode) Text("أدمن — بيقرا صفحة كل:", style = MaterialTheme.typography.bodySmall)
-                if (st.adminMode) Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(10, 20, 30, 60).forEach { sec ->
-                        FilterChip(selected = st.liveIntervalSec == sec, onClick = { scope.launch { c.settings.setLiveInterval(sec) } },
-                            label = { Text("$sec ث") })
-                    }
-                }
-                Text("التطبيق بيفضل يتابع أمازون وجوميا ونون في الخلفية. بيستهلك نت وبطارية، فلو على باقة فعّل «على Wi-Fi بس».",
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Toggle("على Wi-Fi بس", st.liveWifiOnly) { on -> scope.launch { c.settings.setLiveWifiOnly(on) } }
                 Text("ابعتلي إشعار من خصم:", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(10, 30, 50, 70).forEach { p ->
@@ -145,58 +98,7 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                             label = { Text("$p%+") })
                     }
                 }
-                Text("10–29% إشعار هادي مجمّع · 30%+ 🔥 عادي · 50%+ ⚡ بيظهر فوق الشاشة · 70%+ 🚨 «الحق!» باهتزاز قوي",
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = {
-                    runCatching {
-                        ctx.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:${ctx.packageName}")))
-                    }
-                }) { Text("اسمح بالشغل في الخلفية (البطارية)") }
-            }
-            if (!st.hasServer && st.adminMode) Section("أدمن: القراءة المباشرة من المواقع") {
-                Text("التطبيق بيقرا صفحات العروض من المواقع كل 10 دقايق وهو مفتوح، وكل 15 دقيقة في الخلفية.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                listOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر").forEach { (id, name) ->
-                    Toggle(name, id in st.scrapeStores) { on ->
-                        scope.launch { c.settings.setScrapeStores(if (on) st.scrapeStores + id else st.scrapeStores - id) }
-                    }
-                    StoreStatusRow(st.scrapeStatus[id]) { shareDiagnostic(id) }
-                }
-                if (st.scrapeStatus.containsKey("talabat")) StoreStatusRow("طلبات: " + st.scrapeStatus["talabat"]) { shareDiagnostic("talabat") }
-                OutlinedTextField(pages ?: st.extraPages.joinToString("\n"), { pages = it }, Modifier.fillMaxWidth(),
-                    label = { Text("صفحات عروض إضافية (لينك في كل سطر)") },
-                    supportingText = { Text("مثلاً صفحة طلبات مارت لمنطقتك أو صفحة عروض من أي موقع — افتحها في كروم وانسخ اللينك") },
-                    minLines = 2, maxLines = 5)
-                OutlinedTextField(keywords ?: st.scrapeKeywords.joinToString("\n"), { keywords = it }, Modifier.fillMaxWidth(),
-                    label = { Text("كلمات البحث عن العروض (كلمة في كل سطر)") }, minLines = 4, maxLines = 8)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(enabled = !refreshing, onClick = {
-                        scope.launch {
-                            keywords?.let { c.settings.setScrapeKeywords(it) }
-                            pages?.let { c.settings.setExtraPages(it) }
-                            refreshing = true
-                            refreshMsg = runCatching { c.deals.refresh() }
-                                .fold({ "تم ✓ — ${it.size} عرض جديد" }, { it.userMessage() })
-                            refreshing = false
-                        }
-                    }) { Text(if (refreshing) "جاري القراءة…" else "حفظ وتحديث الآن") }
-                }
-                refreshMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            }
-            if (st.adminMode) Section("أدمن: خادم العروض (اختياري)") {
-                OutlinedTextField(url.orEmpty(), { url = it }, Modifier.fillMaxWidth(), label = { Text("عنوان الخادم") },
-                    placeholder = { Text("https://api.example.com") }, singleLine = true)
-                Button(onClick = { test() }) { Text("حفظ واختبار الاتصال") }
-                testMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                markets?.forEach { m ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(m.nameAr, Modifier.weight(1f))
-                        Text(if (m.configured && m.enabled) "متصل ✓" else if (!m.enabled) "متوقف" else "بانتظار بيانات الاعتماد",
-                            color = if (m.configured && m.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-                Text("سيبه فاضي علشان التطبيق يقرا العروض من المواقع مباشرة. لو حطيت سيرفر، العروض هتيجي منه بدل كده.",
+                Text("العروض بيتابعها سيرفرنا 24 ساعة. 10–29% إشعار هادي · 30%+ 🔥 · 50%+ ⚡ · 70%+ 🚨 «الحق!»",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Section("المظهر") {
@@ -206,18 +108,9 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                     }
                 }
             }
-            Section("الإشعارات") {
-                Toggle("تفعيل الإشعارات", st.notificationsEnabled) { on ->
-                    if (on && Build.VERSION.SDK_INT >= 33 && !Notifier.canNotify(ctx)) {
-                        permLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) // result callback stores the choice
-                    } else {
-                        scope.launch { c.settings.setNotifications(on) }
-                    }
-                }
-
-            }
             Section("تنبيهات الأسعار") {
-                if (alerts.isEmpty()) Text("مفيش تنبيهات. اعمل تنبيه من شاشة البحث.", style = MaterialTheme.typography.bodySmall)
+                if (alerts.isEmpty()) Text("مفيش تنبيهات. اعمل تنبيه من شاشة البحث — السيرفر هيبلغك حتى لو الموبايل مقفول.",
+                    style = MaterialTheme.typography.bodySmall)
                 alerts.forEach { a ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -229,32 +122,26 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                     }
                 }
             }
-            if (st.adminMode) Section("أدمن: معادلة تسعير SHEIN") {
+            if (isAdmin) Section("أدمن: حالة سيرفر العروض") {
+                healthError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (health?.isEmpty() == true) Text("السيرفر لسه ما اشتغلش — أول ما يشتغل هتظهر حالته هنا.")
+                health?.forEach { m ->
+                    Column {
+                        Text(m.nameAr + " · " + relativeTime(m.lastRunAt ?: 0), fontWeight = FontWeight.SemiBold)
+                        Text(m.status, style = MaterialTheme.typography.labelMedium,
+                            color = if (m.configured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                    }
+                }
+                OutlinedButton(onClick = { loadHealth() }) { Text("تحديث الحالة") }
+            }
+            if (isAdmin) Section("أدمن: معادلة تسعير SHEIN") {
                 val p = st.pricing
                 Text("(السعر الأصلي بالريال × ${p.sarToEgp.toPlainString()} × ${p.multiplier.toPlainString()}) + ${Money.egp(p.deliveryFeeEgp)} توصيل لكل طلب")
                 val ex = BigDecimal(100).multiply(p.sarToEgp).multiply(p.multiplier).add(p.deliveryFeeEgp)
                 Text("مثال: منتج بـ 100 ر.س = ${Money.egp(ex)}", style = MaterialTheme.typography.bodySmall)
-                Text("القيم بتتحدد من لوحة التحكم.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = {
-                    scope.launch {
-                        c.shein.diagnosticFile()?.let { f ->
-                            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".files", f)
-                            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain")
-                                .putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "تشخيص SHEIN"))
-                        } ?: run { refreshMsg = "لسه مفيش صفحة SHEIN اتقرت" }
-                    }
-                }) { Text("تشخيص آخر صفحة SHEIN") }
+                Text("بتتغير من Supabase ← app_config.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
-    }
-}
-
-@Composable
-private fun StoreStatusRow(status: String?, onShare: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(status ?: "لسه ماتقراش", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
-            color = if ((status ?: "").contains("✓")) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-        TextButton(onClick = onShare) { Text("تشخيص") }
     }
 }
 

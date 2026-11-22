@@ -149,6 +149,8 @@ data class OrderEntity(
 abstract class DealDao {
     @Query("SELECT * FROM deals") abstract fun observeAll(): Flow<List<DealEntity>>
     @Query("SELECT * FROM deals WHERE id = :id") abstract suspend fun get(id: String): DealEntity?
+    @Query("SELECT * FROM deals") abstract suspend fun snapshot(): List<DealEntity>
+    @Query("DELETE FROM deals WHERE id = :id") abstract suspend fun delete(id: String)
     @Query("SELECT * FROM deals WHERE id IN (:ids)") abstract suspend fun getAll(ids: List<String>): List<DealEntity>
     @Upsert abstract suspend fun upsertAll(items: List<DealEntity>)
     @Query("DELETE FROM deals WHERE lastChecked < :beforeSeconds") abstract suspend fun pruneOlderThan(beforeSeconds: Long): Int

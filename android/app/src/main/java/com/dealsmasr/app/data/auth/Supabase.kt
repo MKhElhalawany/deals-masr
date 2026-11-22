@@ -219,6 +219,8 @@ class Supabase(private val store: SessionStore, private val json: Json) {
     suspend fun insert(table: String, row: JsonObject): String =
         call("POST", "/rest/v1/$table", row.toString(), token(), prefer = "return=representation")
 
+    suspend fun delete(table: String, filter: String): String = call("DELETE", "/rest/v1/$table?$filter", null, token())
+
     suspend fun update(table: String, filter: String, patch: JsonObject): String =
         call("PATCH", "/rest/v1/$table?$filter", patch.toString(), token(), prefer = "return=representation")
 }

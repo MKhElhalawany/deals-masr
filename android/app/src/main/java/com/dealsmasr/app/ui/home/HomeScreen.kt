@@ -102,7 +102,7 @@ class DealsViewModel(private val repo: DealsRepository, private val settings: Se
 
     fun refreshIfStale() = viewModelScope.launch {
         val s = settings.current()
-        if (System.currentTimeMillis() - s.lastRefresh > 10 * 60_000) refresh()
+        if (System.currentTimeMillis() - s.lastRefresh > 60_000) refresh()
     }
 
     fun refresh() = viewModelScope.launch {
@@ -147,8 +147,7 @@ fun HomeScreen(
                     }
                     s.deals.isEmpty() -> item {
                         MessageState(Icons.Outlined.LocalOffer, "لا توجد عروض موثقة حالياً",
-                            "بنقرا العروض من أمازون وجوميا كل 10 دقايق. اسحب للتحديث أو شوف حالة القراءة في الإعدادات.",
-                            "حالة القراءة", onSettings)
+                            "سيرفرنا بيتابع أمازون وجوميا ونون 24 ساعة، والعروض بتظهر هنا أول بأول. اسحب للتحديث.")
                     }
                     else -> {
                         item {
