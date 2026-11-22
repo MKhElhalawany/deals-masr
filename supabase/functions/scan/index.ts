@@ -44,7 +44,9 @@ async function vmAlive(): Promise<boolean> {
 /** Mobile browser first, desktop as a second try if the store refuses or the connection drops. */
 async function fetchPage(url: string): Promise<[number, string]> {
   let last: [number, string] = [0, ""], err: unknown = null;
-  for (const ua of UAS) {
+  // Amazon's server HTML matches our parser in desktop layout; noon/jumia work best as mobile
+  const order = url.includes("amazon.") ? [UAS[1], UAS[0]] : UAS;
+  for (const ua of order) {
     try {
       const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000), headers: {
         "User-Agent": ua, "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -87,8 +89,13 @@ async function scanStore(store: string) {
   const step = Math.floor(Date.now() / 20_000);
   // each run: the store's deals page (if any) + one keyword search, fetched in parallel
   const targets: [string, string][] = [];
-  if (spec.deals.length) targets.push([spec.deals[step % spec.deals.length], "صفحة العروض"]);
-  if (kws.length) { const kw = kws[step % kws.length]; targets.push([spec.search(kw), kw]); }
+  if (store === "amazon") {   // Amazon rate-limits cloud IPs: one page per run, alternating deals page / keyword
+    if (step % 2 === 0 || !kws.length) targets.push([spec.deals[0], "صفحة العروض"]);
+    else { const kw = kws[Math.floor(step / 2) % kws.length]; targets.push([spec.search(kw), kw]); }
+  } else {
+    if (spec.deals.length) targets.push([spec.deals[step % spec.deals.length], "صفحة العروض"]);
+    if (kws.length) { const kw = kws[step % kws.length]; targets.push([spec.search(kw), kw]); }
+  }
   if (spec.deals.length === 0 && kws.length > 1) { const kw = kws[(step + Math.floor(kws.length / 2)) % kws.length]; targets.push([spec.search(kw), kw]); }
   if (!targets.length) return { skipped: "no targets" };
   const label = targets.map((t) => t[1]).join(" + ");

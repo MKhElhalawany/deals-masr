@@ -99,8 +99,8 @@ create trigger call_scan after insert on public.shein_quotes for each row execut
 drop trigger if exists call_scan on public.orders;
 create trigger call_scan after insert or update of status on public.orders for each row execute function public.tg_call_scan();
 """)
-    # free plan = 500k runs/month. amazon + noon every 20 s (2 pages each) ≈ 260k; jumia (Cloudflare-blocked) every 5 min
-    schedules = {"amazon": "20 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *"}
+    # free plan = 500k runs/month: noon every 20 s (2 pages) + amazon every 30 s ≈ 216k; jumia (Cloudflare-blocked) every 5 min
+    schedules = {"amazon": "30 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *"}
     for s, every in schedules.items():
         S.sql(ref, f"select cron.schedule('scan-{s}', '{every}', $c$select app_private.call_scan('{{\"job\":\"scan\",\"store\":\"{s}\"}}'::jsonb)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []
@@ -109,7 +109,7 @@ create trigger call_scan after insert or update of status on public.orders for e
     # 4) live check from Supabase's servers to the stores (real numbers, no phone involved)
     time.sleep(5)
     OUT.append("### 🛰️ سيرفر Supabase (مجاني، بدون فيزا) — فحص حقيقي للمتاجر")
-    OUT.append(f"الجدولة: أمازون ونون كل 20 ث (صفحتين في كل مرة)، جوميا كل 5 دقايق ({len(jobs)} مهام) · الإشعارات الفورية: {'✅' if fsa else '⏳ مش متفعّلة'}")
+    OUT.append(f"الجدولة: نون كل 20 ث (صفحتين)، أمازون كل 30 ث، جوميا كل 5 دقايق ({len(jobs)} مهام) · الإشعارات الفورية: {'✅' if fsa else '⏳ مش متفعّلة'}")
     OUT.append("| المتجر | HTTP | منتجات اتقرت | عروض اتحفظت | تحميل الصفحة | حفظ | الإجمالي |\n|---|---|---|---|---|---|---|")
     c = httpx.Client(timeout=90)
     working = 0
