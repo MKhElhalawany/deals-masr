@@ -9,7 +9,7 @@ const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const STORE_NAMES = Object.fromEntries(Object.entries(STORES).map(([k, v]) => [k, v.name]));
-const UA = "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36";
+const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 // ───────── PostgREST with the server key (key exists only as a function secret)
 async function rest(method: string, path: string, body?: unknown, prefer = "return=minimal"): Promise<any> {
