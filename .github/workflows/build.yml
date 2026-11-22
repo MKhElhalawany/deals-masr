@@ -107,6 +107,8 @@ jobs:
           sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/supabase_stub.sql
           for f in supabase/migrations/*.sql; do sudo -u postgres psql -v ON_ERROR_STOP=1 -f "$f"; done
           sudo -u postgres psql -v ON_ERROR_STOP=1 -f supabase/tests/rls_test.sql
+          # once more inside ONE transaction, exactly like the live run (catches same-timestamp collisions)
+          (echo "begin;"; cat supabase/tests/rls_test.sql; echo "rollback;") | sudo -u postgres psql -v ON_ERROR_STOP=1
 
   # Creates/updates the Supabase project, applies migrations, live security gates, owner setup.
   # Needs only the SUPABASE_ACCESS_TOKEN secret. Outputs public values only (URL + publishable key).
