@@ -139,6 +139,15 @@ function noonJson(html: string): Item[] {
   return [...out.values()];
 }
 
+// ───────── Town Team (Shopify storefront): product cards with "compare at" (crossed-out) prices
+export function parseTownTeam(html: string): [Item[], number] {
+  const d = doc(html);
+  const cards = d.querySelectorAll("a[href*='/products/']").length;
+  const items = generic(html, "townteam", "https://townteam.com/", (url) => (url.match(/\/products\/([^/?#]+)/)?.[1] ?? defaultId(url)), d)
+    .map((i) => ({ ...i, url: i.url.split("?")[0] }));
+  return [items, Math.max(cards, items.length)];
+}
+
 // ───────── generic deal-card detector (crossed-out price + lower current price inside a linked card)
 const STRIKE = /(old|was|strike|before|original|crossed|line-?through|prev|regular|rrp|list-?price)/i;
 const PRICE_CLS = /(price|prc|amount|now|sell|current|final|sale|value)/i;
@@ -199,4 +208,5 @@ export const STORES: Record<string, { name: string; search: ((q: string) => stri
   amazon: { name: "أمازون مصر", search: amazonSearch, parse: parseAmazon, deals: AMAZON_DEALS },
   jumia: { name: "جوميا مصر", search: jumiaSearch, parse: parseJumia, deals: JUMIA_DEALS },
   noon: { name: "نون مصر", search: null, parse: parseNoon, deals: NOON_CATEGORIES },
+  townteam: { name: "تاون تيم", search: null, parse: parseTownTeam, deals: ["https://townteam.com/collections/all"] },
 };

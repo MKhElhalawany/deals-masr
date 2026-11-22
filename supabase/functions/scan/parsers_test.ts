@@ -44,3 +44,25 @@ Deno.test("noon: no search pages (robots.txt), category pages only", async () =>
   assertEquals(STORES.noon.search, null);
   assertEquals(STORES.noon.deals.length > 0 && STORES.noon.deals.every((u) => u.startsWith("https://www.noon.com/egypt-en/") && !u.includes("/search")), true);
 });
+Deno.test("discovery: robots, links, pages, fingerprint", async () => {
+  const { Robots, categoryLinks, nextPage, fingerprint } = await import("./discover.ts");
+  const rb = new Robots("User-agent: *\nDisallow: /*/search/\nDisallow: /collections/*sort_by*\n");
+  assertEquals(rb.ok("https://www.noon.com/egypt-ar/search/?q=x"), false);
+  const noon = categoryLinks("noon", '<a href="/egypt-en/mobiles/">m</a><a href="/egypt-en/x/p/">p</a><a href="/egypt-en/search/">s</a><a href="/egypt-en/fashion/men-31225/">f</a>', 0, rb);
+  assertEquals(noon.map((t) => t.url), ["https://www.noon.com/egypt-en/mobiles/?limit=50", "https://www.noon.com/egypt-en/fashion/men-31225/?limit=50"]);
+  const amz = categoryLinks("amazon", '<a href="/s?i=electronics&amp;rh=n%3A21832883031%2Cp_n_deal_type%3A1&amp;dc&amp;qid=1&amp;ref=sr_nr">E</a><a href="/dp/B01">x</a>', 0, rb);
+  assertEquals(amz.length, 1);
+  assertEquals(amz[0].url.includes("pct-off=10-") && amz[0].url.includes("rh=n%3A21832883031"), true);
+  const tt = categoryLinks("townteam", '<a href="/collections/spring-offers">s</a><a href="/collections/all?sort_by=price">x</a><a href="/products/a">p</a>', 0, rb);
+  assertEquals(tt.map((t) => t.url), ["https://townteam.com/collections/spring-offers", "https://townteam.com/collections/all"]);  // sort params are dropped
+  assertEquals(categoryLinks("noon", '<a href="/egypt-en/mobiles/">m</a>', 3, rb).length, 0);
+  assertEquals(nextPage("noon", "https://www.noon.com/egypt-en/mobiles/?limit=50", 50, 0, 1)?.url, "https://www.noon.com/egypt-en/mobiles/?limit=50&page=2");
+  assertEquals(nextPage("noon", "https://www.noon.com/egypt-en/mobiles/?limit=50&page=3", 50, 0, 1), null);
+  assertEquals(nextPage("noon", "https://www.noon.com/egypt-en/mobiles/?limit=50", 0, 0, 1), null);
+  assertEquals(fingerprint([{ id: "a", current_price: 1 }, { id: "b", current_price: 2 }]), fingerprint([{ id: "b", current_price: 2 }, { id: "a", current_price: 1 }]));
+});
+Deno.test("town team shopify cards", async () => {
+  const { parseTownTeam } = await import("./parsers.ts");
+  const [items] = parseTownTeam('<div class="card"><a href="/products/polo-shirt?variant=1"><img src="https://cdn.shopify.com/a.jpg" alt="Polo Shirt Navy"></a><span class="price-item--regular"><s>LE 899.00</s></span><span class="price-item--sale">LE 599.00</span></div>');
+  assertEquals([items.length, items[0]?.current_price, items[0]?.original_price, items[0]?.url, items[0]?.id.startsWith("townteam:polo-shirt-")], [1, 599, 899, "https://townteam.com/products/polo-shirt", true]);
+});

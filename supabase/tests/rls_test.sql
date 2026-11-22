@@ -178,4 +178,26 @@ select pg_temp.check((select count(*) from public.price_history where deal_id = 
 delete from public.deals where id like 'amazon:rls-ing-%';
 delete from public.alerts where query = 'rlsprobe phone';
 
+-- discovery queue: server-only, claims due targets, adaptive revisit timing
+set role authenticated;
+select pg_temp.must_fail($$select * from public.scan_targets$$);
+select pg_temp.must_fail($$select * from public.claim_targets('amazon', 1)$$);
+select pg_temp.must_fail($$select public.add_targets('amazon', '[]'::jsonb)$$);
+reset role;
+set role service_role;
+select pg_temp.check(public.add_targets('townteam', '[{"url":"https://townteam.com/rls-a","kind":"category"},{"url":"https://townteam.com/rls-b","kind":"category"},{"url":"javascript:x"},{"url":"https://townteam.com/rls-a"}]'::jsonb) = 2, 'add_targets keeps valid, unique URLs');
+reset role;
+update public.scan_targets set next_run_at = now() + interval '1 hour' where url = 'https://townteam.com/rls-b';
+create temp table _claimed as select * from public.claim_targets('townteam', 1);
+select pg_temp.check((select url from _claimed) = 'https://townteam.com/rls-a', 'due target is claimed first');
+select pg_temp.check((select next_run_at > now() + interval '4 minutes' from public.scan_targets where url = 'https://townteam.com/rls-a'), 'claimed target is leased');
+select public.finish_target((select id from _claimed), 'ok', 40, 12, 3, 'fp1', 900);
+select pg_temp.check((select interval_sec from public.scan_targets where url = 'https://townteam.com/rls-a') = 150, 'new deals → revisit sooner (300 → 150 s)');
+select public.finish_target((select id from _claimed), 'ok', 40, 12, 0, 'fp1', 900);
+select pg_temp.check((select interval_sec from public.scan_targets where url = 'https://townteam.com/rls-a') = 300, 'unchanged page → back off (x2)');
+select public.finish_target((select id from _claimed), 'blocked', null, null, null, null, 100);
+select pg_temp.check((select fails from public.scan_targets where url = 'https://townteam.com/rls-a') = 1, 'failure counted, backoff applied');
+select pg_temp.check((select count(*) from public.scan_log where target_id = (select id from _claimed)) = 3, 'every scan logged');
+delete from public.scan_targets where url like 'https://townteam.com/rls-%';
+
 select 'ALL RLS TESTS PASSED';

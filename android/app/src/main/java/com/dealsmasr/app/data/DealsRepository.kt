@@ -68,7 +68,7 @@ class DealsRepository(
     val favoriteIds: Flow<List<String>> = favoriteDao.observeIds()
     val alerts: Flow<List<AlertEntity>> = alertDao.observeAll()
 
-    private val storeNames = mapOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر", "talabat" to "طلبات")
+    private val storeNames = mapOf("amazon" to "أمازون مصر", "jumia" to "جوميا مصر", "noon" to "نون مصر", "townteam" to "تاون تيم", "talabat" to "طلبات")
     private var lastSyncIso: String? = null
     private var lastFullSync = 0L
     private var syncLoaded = false

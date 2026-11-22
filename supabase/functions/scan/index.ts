@@ -5,6 +5,7 @@ import { amazonCandidates, Blocked, generic, parseAmazonProduct, STORES } from "
 const checkedAsins = new Map<string, number>();   // product pages already checked (per isolate), avoid re-fetching
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
+import { categoryLinks, fingerprint, nextPage, Robots } from "./discover.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -78,6 +79,24 @@ async function personalPushes(notes: { user_id: string; deal_id: string | null; 
   }
 }
 
+/** Amazon often shows "Deal" cards without the old price: verify ONE unseen candidate per run on its product page. */
+async function verifyAmazonCandidate(items: unknown[]) {
+  if (!amazonCandidates.length) return;
+  const now = Date.now();
+  for (const [k, t] of checkedAsins) if (now - t > 6 * 3600_000) checkedAsins.delete(k);
+  const fresh = amazonCandidates.filter((c) => !checkedAsins.has(c.asin));
+  const known = fresh.length ? new Set((await select(`deals?select=id&id=in.(${fresh.map((c) => `"amazon:${c.asin}"`).join(",")})`)).map((r: any) => r.id)) : new Set();
+  const pick = fresh.find((c) => !known.has(`amazon:${c.asin}`));
+  if (!pick) return;
+  checkedAsins.set(pick.asin, now);
+  try {
+    const [pc, ph] = await fetchPage(`https://www.amazon.eg/dp/${pick.asin}?language=en_AE`);
+    const v = pc === 200 ? parseAmazonProduct(ph) : null;
+    if (v) items.push({ id: `amazon:${pick.asin}`, store: "amazon", title: pick.title, url: `https://www.amazon.eg/dp/${pick.asin}`,
+      image_url: pick.image_url, current_price: v.current, original_price: v.list });
+  } catch (_) { /* skip */ }
+}
+
 async function scanStore(store: string) {
   const spec = STORES[store];
   const cfg = await config();
@@ -116,24 +135,7 @@ async function scanStore(store: string) {
       try { const [it, n] = spec.parse(html); items.push(...it); cards += n; } catch (e) { if (e instanceof Blocked) blockedCode = c || 403; else firstErr ??= e; }
     }
     if (!cards && blockedCode) throw new Blocked(`HTTP ${blockedCode}`);
-    // Amazon often shows "Deal" cards without the old price: verify ONE unseen candidate per run on its product page
-    if (store === "amazon" && amazonCandidates.length) {
-      const now = Date.now();
-      for (const [k, t] of checkedAsins) if (now - t > 6 * 3600_000) checkedAsins.delete(k);
-      const fresh = amazonCandidates.filter((c) => !checkedAsins.has(c.asin));
-      const known = fresh.length ? new Set((await select(`deals?select=id&id=in.(${fresh.map((c) => `"amazon:${c.asin}"`).join(",")})`)).map((r: any) => r.id)) : new Set();
-      const pick = fresh.find((c) => !known.has(`amazon:${c.asin}`));
-      if (pick) {
-        checkedAsins.set(pick.asin, now);
-        try {
-          const [pc, ph] = await fetchPage(`https://www.amazon.eg/dp/${pick.asin}?language=en_AE`);
-          const v = pc === 200 ? parseAmazonProduct(ph) : null;
-          if (v) items.push({ id: `amazon:${pick.asin}`, store: "amazon", title: pick.title, url: `https://www.amazon.eg/dp/${pick.asin}`,
-            image_url: pick.image_url, current_price: v.current, original_price: v.list });
-        } catch (_) { /* skip */ }
-      }
-    }
-    if (!cards && firstErr) throw firstErr;
+    if (store === "amazon") await verifyAmazonCandidate(items);
     const t2 = Date.now();
     const res = await ingest(items);
     const t3 = Date.now();
@@ -150,6 +152,82 @@ async function scanStore(store: string) {
     await status(store, false, blocked ? `⛔ المتجر حاجب سيرفر Supabase (${e.message}) — هنحاول تاني بعد شوية` : `⚠️ ${String(e).slice(0, 250)}`);
     return { store, error: String(e) };
   }
+}
+
+// ───────── discovery queue (amazon, noon, townteam): every category of the store, only discounted items saved
+const QUEUE_STORES = new Set(["amazon", "noon", "townteam"]);
+const ORIGINS: Record<string, string> = { amazon: "https://www.amazon.eg", noon: "https://www.noon.com", townteam: "https://townteam.com" };
+const robotsMem = new Map<string, { at: number; r: Robots }>();
+
+/** robots.txt per store: memory → DB cache (24 h) → one fetch. Unknown robots = scan nothing new (fail closed). */
+async function robotsFor(store: string): Promise<Robots | null> {
+  const m = robotsMem.get(store);
+  if (m && Date.now() - m.at < 3600_000) return m.r;
+  const row = (await select(`robots_cache?select=body,fetched_at&store=eq.${store}`))[0];
+  let body: string | null = row && Date.now() - Date.parse(row.fetched_at) < 86400_000 ? row.body : null;
+  if (body === null) {
+    try {
+      const r = await fetch(`${ORIGINS[store]}/robots.txt`, { signal: AbortSignal.timeout(15_000), headers: { "User-Agent": UAS[0] } });
+      if (r.ok) {
+        body = await r.text();
+        await rest("POST", "robots_cache", [{ store, body: body.slice(0, 200_000), fetched_at: new Date().toISOString() }], "return=minimal,resolution=merge-duplicates");
+      } else body = row?.body ?? null;
+    } catch { body = row?.body ?? null; }
+  }
+  if (body === null) return null;
+  const rb = new Robots(body);
+  robotsMem.set(store, { at: Date.now(), r: rb });
+  return rb;
+}
+
+async function scanQueue(store: string, n: number) {
+  const spec = STORES[store];
+  const robots = await robotsFor(store);
+  if (!robots) { await status(store, false, "⚠️ مش قادرين نقرا robots.txt — مستنيين"); return { skipped: "no robots" }; }
+  const targets: { id: number; url: string; kind: string; label: string | null; depth: number; fingerprint: string | null }[] =
+    await rest("POST", "rpc/claim_targets", { p_store: store, p_n: n }, "return=representation");
+  if (!targets.length) return { skipped: "queue empty" };
+  const t0 = Date.now();
+  const results = await Promise.all(targets.map(async (t) => {
+    const s0 = Date.now();
+    if (!robots.ok(t.url)) {
+      await rest("POST", "rpc/finish_target", { p_id: t.id, p_status: "robots", p_items: 0, p_deals: 0, p_new: 0, p_fingerprint: null, p_ms: 0 });
+      return { t, error: "robots" };
+    }
+    try {
+      const [code, html] = await fetchPage(t.url);
+      if ([403, 429, 503].includes(code)) throw new Blocked(`HTTP ${code}`);
+      const [parsed, cards] = spec.parse(html);
+      const items: any[] = [...parsed];
+      if (store === "amazon") await verifyAmazonCandidate(items);
+      const fp = fingerprint(parsed);
+      const res = items.length ? await ingest(items) : { accepted: 0, events: [], notifications: [] };
+      const pushed = await dealPushes(res.events, STORE_NAMES);
+      await personalPushes(res.notifications);
+      // discovery: category links (only when the page changed) + next page
+      const found = [];
+      if (fp !== t.fingerprint) found.push(...categoryLinks(store, html, t.depth, robots));
+      const np = nextPage(store, t.url, cards, res.events.length, t.depth);
+      if (np && robots.ok(np.url)) found.push(np);
+      const added = found.length ? await rest("POST", "rpc/add_targets", { p_store: store, p_rows: found }, "return=representation") : 0;
+      await rest("POST", "rpc/finish_target", { p_id: t.id, p_status: "ok", p_items: cards, p_deals: res.accepted, p_new: res.events.length, p_fingerprint: fp, p_ms: Date.now() - s0 });
+      return { t, code, cards, accepted: res.accepted, events: res.events.length, added, pushed, ms: Date.now() - s0 };
+    } catch (e) {
+      const blocked = e instanceof Blocked;
+      await rest("POST", "rpc/finish_target", { p_id: t.id, p_status: blocked ? "blocked" : "error", p_items: null, p_deals: null, p_new: null, p_fingerprint: null, p_ms: Date.now() - s0 });
+      return { t, error: String(e).slice(0, 160), blocked };
+    }
+  }));
+  const ok = results.filter((r) => !("error" in r)) as any[];
+  const cards = ok.reduce((a, r) => a + r.cards, 0), acc = ok.reduce((a, r) => a + r.accepted, 0), ev = ok.reduce((a, r) => a + r.events, 0);
+  const added = ok.reduce((a, r) => a + (r.added ?? 0), 0);
+  const label = results.map((r) => r.t.label ?? new URL(r.t.url).pathname).join(" + ").slice(0, 80);
+  await status(store, ok.length > 0, ok.length
+    ? `✓ ${acc} عرض من ${cards} منتج (${label}) · جديد/نزل: ${ev} · أقسام/صفحات جديدة: ${added} · ${Date.now() - t0}ms`
+    : `⚠️ ${(results[0] as any).error}`, acc);
+  if (store === "amazon" && Math.floor(Date.now() / 30_000) % 180 === 0) await rest("POST", "rpc/expire_stale_deals", { p_hours: 36 });
+  return { store, code: (results[0] as any).code, targets: results.map((r: any) => ({ url: r.t.url, code: r.code, cards: r.cards, accepted: r.accepted, events: r.events, added: r.added, ms: r.ms, error: r.error })),
+    cards, accepted: acc, events: ev, added, fetch_ms: Date.now() - t0 };
 }
 
 async function runSearch(id: number) {
@@ -270,7 +348,9 @@ Deno.serve(async (req) => {
     else if (body.job === "probe") out = await probe(String(body.url));   // pushes: needed even when the VM worker runs
     else if (await vmAlive()) out = { skipped: "vm worker active" };
     else if (body.job === "scan") {
-      out = await scanStore(String(body.store));
+      const st = String(body.store);
+      const mode = (await config()).scanner_mode ?? "queue";
+      out = mode === "queue" && QUEUE_STORES.has(st) ? await scanQueue(st, st === "noon" ? 2 : 1) : await scanStore(st);
       if (body.store === "amazon") await status("edge", true, `شغال ✓ ${new Date().toISOString().slice(11, 19)} UTC · Supabase Edge كل 20 ث · push ${pushEnabled() ? "on" : "off"}`);
     } else if (body.job === "debug") {   // CI diagnostics only (secret-protected): first product card of a store page
       const spec = STORES[String(body.store)];
