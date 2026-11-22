@@ -150,7 +150,11 @@ create trigger call_scan after insert or update of status on public.orders for e
     try:
         a = {r["t"]: r for r in S.sql(ref, q_stats)}
         t0 = time.time()
-        time.sleep(180)
+        noon_runs: dict[str, str] = {}   # scheduled noon runs seen during the window (DB reads only, no store requests)
+        while time.time() - t0 < 180:
+            for r in S.sql(ref, "select message, last_run from scraper_status where store = 'noon'") or []:
+                noon_runs[r["last_run"]] = r["message"]
+            time.sleep(15)
         b = {r["t"]: r for r in S.sql(ref, q_stats)}
         mins = (time.time() - t0) / 60
         sizes = {r["t"]: r for r in S.sql(ref, "select relname as t, n_live_tup as rows, pg_total_relation_size(relid) as bytes "
@@ -163,6 +167,9 @@ create trigger call_scan after insert or update of status on public.orders for e
                 upd = (int(b[t]["upd"]) - int(a[t]["upd"])) / mins
                 sz = sizes.get(t, {})
                 OUT.append(f"| {t} | {ins:.1f} | {upd:.1f} | {sz.get('rows', '')} | {int(sz.get('bytes', 0)) // 1024} KB |")
+        OUT.append("\n### نون — التشغيلات المجدولة اللي اتسجلت في الـ 3 دقايق")
+        for when, msg in sorted(noon_runs.items()):
+            OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
     except Exception as e:
         OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
     text = "\n".join(OUT)

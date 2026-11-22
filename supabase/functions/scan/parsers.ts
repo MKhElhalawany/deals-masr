@@ -96,13 +96,14 @@ export function parseJumia(html: string): [Item[], number] {
 // ───────── noon Egypt (no browser here: server HTML + embedded JSON, best effort)
 // noon's robots.txt disallows search pages (/*/search/, /*/search?) for all crawlers → no noon search URLs at all.
 // Temporary coverage: a small set of category pages (allowed), page 1, 50 products each, until Phase 1.
+// paths confirmed among the category links on noon.com/egypt-en/ (probe 2026-11-22), all allowed by robots.txt
 export const NOON_CATEGORIES: string[] = [
-  "https://www.noon.com/egypt-en/electronics-and-mobiles/?limit=50",
+  "https://www.noon.com/egypt-en/mobiles/?limit=50",
+  "https://www.noon.com/egypt-en/eg-home-appliances/?limit=50",
   "https://www.noon.com/egypt-en/fashion/eg-fashion-men-cat/?limit=50",
   "https://www.noon.com/egypt-en/fashion/eg-fashion-women-cat/?limit=50",
-  "https://www.noon.com/egypt-en/eg-fashion-footwear/?limit=50",
+  "https://www.noon.com/egypt-en/home-kitchen/?limit=50",
   "https://www.noon.com/egypt-en/beauty/?limit=50",
-  "https://www.noon.com/egypt-en/sports-eg/?limit=50",
 ];
 const noonId = (url: string) => {
   const seg = url.split("?")[0].replace(/\/$/, "").split("/");
