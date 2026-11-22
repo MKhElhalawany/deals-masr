@@ -280,12 +280,15 @@ def smoke_test(url, key):
     return email
 
 
-def write_worker_env(path: str):
-    """For deployment only: write the worker's env file (URL + server-only secret key), masked in logs, mode 600."""
+def existing_ref() -> str:
     projects = [p for p in api("GET", "/projects") or [] if p["name"] == PROJECT_NAME]
     if not projects:
         fail("Supabase project not found — the setup job must succeed first.")
-    ref = projects[0]["ref"]
+    return projects[0]["ref"]
+
+
+def server_key(ref: str) -> str:
+    """Server-only secret key (never printed: masked in GitHub logs)."""
     status, keys = http("GET", f"{API}/projects/{ref}/api-keys?reveal=true", headers={"Authorization": f"Bearer {TOKEN}"})
     keys = keys if status < 400 and isinstance(keys, list) else []
     secret = next((k["api_key"] for k in keys if k.get("type") == "secret" and k.get("api_key")), None)
@@ -298,6 +301,13 @@ def write_worker_env(path: str):
     if not secret:
         fail("Could not get a server key for the worker (token needs 'API key secrets: read').")
     print(f"::add-mask::{secret}", flush=True)
+    return secret
+
+
+def write_worker_env(path: str):
+    """For deployment only: write the worker's env file (URL + server-only secret key), masked in logs, mode 600."""
+    ref = existing_ref()
+    secret = server_key(ref)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(f"SUPABASE_URL=https://{ref}.supabase.co\nSUPABASE_SERVICE_KEY={secret}\n")

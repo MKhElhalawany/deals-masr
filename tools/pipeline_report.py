@@ -45,7 +45,7 @@ def main():
     results = {"اختبارات الخادم": E("R_BACKEND"), "اختبارات أمان قاعدة البيانات": E("R_SQL"),
                "تجهيز Supabase": E("R_SUPABASE"), "بناء التطبيق": E("R_ANDROID"),
                "التأكد إن التطبيق مفيهوش سكرابنج": E("R_GUARD"), "اختبارات سيرفر العروض": E("R_WORKER_TESTS"),
-               "تشغيل سيرفر العروض": E("R_DEPLOY")}
+               "تشغيل سيرفر العروض": E("R_DEPLOY"), "سيرفر Supabase المجاني": E("R_EDGE")}
     failed = [k for k, v in results.items() if v == "failure"]
     run = E("RUN_URL")
 
@@ -70,9 +70,13 @@ def main():
                      f"اكتب إيميل حساب Supabase بتاعك ({owner}) ← افتح الرسالة اللي هتوصلك على نفس الموبايل واضغط اللينك. خلاص.")
         elif not owner:
             admin = "\n\nمقدرناش نعرف إيميلك من Supabase. ضيف Secret اسمه `ADMIN_EMAIL` فيه إيميلك."
-        server = ("\n\n**سيرفر العروض:** ✅ شغال 24 ساعة وبيحدّث العروض." if E("DEPLOY_RESULT") == "deployed" else
-                  "\n\n**سيرفر العروض:** ⏳ لسه مش متجهز — اتبع docs/SERVER_SETUP.md (خطوة واحدة: سيرفر Oracle المجاني). "
-                  "لحد ما يشتغل، التطبيق هيعرض العروض اللي في قاعدة البيانات بس.")
+        if E("DEPLOY_RESULT") == "deployed":
+            server = "\n\n**سيرفر العروض:** ✅ سيرفر Oracle شغال 24 ساعة (كل 8 ث لكل متجر)."
+        elif E("R_EDGE") == "success":
+            server = (f"\n\n**سيرفر العروض:** ✅ شغال 24 ساعة على Supabase مجاناً (كل 30 ث لكل متجر) — "
+                      f"متاجر شغالة فعلاً: {E('EDGE_WORKING') or '0'}/3.\n\n{E('EDGE')}")
+        else:
+            server = "\n\n**سيرفر العروض:** ⚠️ ماتجهزش في التشغيل ده — هيتعاد تلقائياً."
         push = ("\n\n**الإشعارات الفورية (والتطبيق مقفول):** ✅ متفعّلة (Firebase)." if E("FIREBASE") == "true" else
                 "\n\n**الإشعارات الفورية (والتطبيق مقفول):** ⏳ مش متفعّلة لسه — اتبع docs/PUSH_SETUP.md (مشروع Firebase مجاني + Secret واحد)."
                 + (f" السبب: {E('FIREBASE_ERROR')}" if E("FIREBASE_ERROR") else ""))

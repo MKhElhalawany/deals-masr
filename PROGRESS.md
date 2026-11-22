@@ -59,3 +59,12 @@
   - Alerts, favourites and orders are sent to each user's own device tokens.
   - Duplicates are prevented between Realtime and push.
 - CI: a `firebase` job (registers the app, outputs public ids) and a `latency` job (measured realtime delivery, FCM accept time and worker status), whose results go into the release issue.
+
+## v3.2 — free 24/7 scanner on Supabase (no VM, no card)
+- `supabase/functions/scan` (Deno): Amazon, Jumia and Noon parsers (no browser), FCM sender, best-effort SHEIN pricing. Called only by the database with a secret header.
+- pg_cron runs every 30 s per store. Triggers call the function instantly for new search requests, SHEIN quotes and order status changes (pushes).
+- `public.ingest_deals` RPC, shared by the edge scanner and the VM worker:
+  - only real changes are written, so Realtime and push stay quiet otherwise;
+  - writes price history and alert/favourite notifications;
+  - tested in `rls_test.sql`.
+- The edge scanner steps aside automatically when the Oracle VM worker is alive.

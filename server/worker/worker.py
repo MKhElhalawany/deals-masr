@@ -48,8 +48,8 @@ class Config:
             return self.data
 
 
-def notify_users(db: DB, events: list[dict]):
-    rows = db.notify(events)
+def notify_users(db: DB, rows: list[dict]):
+    """rows = notifications created by public.ingest_deals (alerts / favourite drops) → personal pushes"""
     if not rows or not PUSH.enabled:
         return
     by_user: dict[str, list[dict]] = {}
@@ -100,10 +100,11 @@ class StoreLoop(threading.Thread):
             started = time.time()
             try:
                 items, cards = self._fetch(url, spec)
-                events = self.db.save_deals(items, min_pct())
+                res = self.db.ingest(items, min_pct())
+                events = res["events"]
                 saved_at = time.time()
                 pushed = PUSH.deal_events(events, STORE_NAMES)
-                notify_users(self.db, events)
+                notify_users(self.db, res["notifications"])
                 if url in self.last_visit:
                     self.revisit[label] = started - self.last_visit[url]
                 self.last_visit[url] = started
@@ -152,13 +153,12 @@ class QueueLoop(threading.Thread):
     def __init__(self, cfg: Config):
         super().__init__(name="queues", daemon=True)
         self.cfg, self.db, self.f = cfg, DB(), Fetcher()
-        self.orders_since = now_iso()
         self.last_expire = 0.0
         self.last_beat = 0.0
 
     def run(self):
         while not stop_event.is_set():
-            for job in (self.shein, self.searches, self.orders, self.housekeeping):
+            for job in (self.shein, self.searches, self.housekeeping):   # order pushes: DB trigger → edge function
                 try:
                     job()
                 except Exception:
@@ -237,34 +237,15 @@ class QueueLoop(threading.Thread):
             for s in stores:
                 try:
                     items, _ = StoreLoop._fetch(self, STORES[s]["search"](r["query"]), STORES[s])
-                    events = self.db.save_deals(items, float(self.cfg.get().get("min_discount_pct", 10)))
-                    PUSH.deal_events(events, STORE_NAMES)
-                    notify_users(self.db, events)
-                    total += len(items)
+                    res = self.db.ingest(items, float(self.cfg.get().get("min_discount_pct", 10)))
+                    PUSH.deal_events(res["events"], STORE_NAMES)
+                    notify_users(self.db, res["notifications"])
+                    total += res["accepted"]
                 except Exception as e:
                     log.info("search %s on %s failed: %s", r["query"], s, e)
             self.db.update("search_requests", f"id=eq.{r['id']}", {"status": "done", "message": f"{total} عرض", "done_at": now_iso()})
 
     store = "search"  # used by StoreLoop._fetch logging
-
-    # order pushes: confirmed → customer, new → admins
-    def orders(self):
-        if not PUSH.enabled:
-            return
-        rows = self.db.select("orders", f"select=id,user_id,status,customer_name,total_egp,updated_at&updated_at=gt.{self.orders_since.replace('+', '%2B')}&order=updated_at.asc&limit=50")
-        if not rows:
-            return
-        self.orders_since = rows[-1]["updated_at"]
-        admins = None
-        for o in rows:
-            if o["status"] == "confirmed":
-                toks = [t["token"] for t in self.db.select("device_tokens", f"select=token&enabled=eq.true&user_id=eq.{o['user_id']}")]
-                PUSH.to_tokens(toks, "تم تأكيد طلبك 🎉", f"طلب #{o['id']} اتأكد وهيوصلك خلال 25–35 يوم", f"order/{o['id']}", f"c{o['id']}")
-            elif o["status"] == "submitted":
-                if admins is None:
-                    ids = ",".join(a["id"] for a in self.db.select("profiles", "select=id&role=eq.admin")) or "00000000-0000-0000-0000-000000000000"
-                    admins = [t["token"] for t in self.db.select("device_tokens", f"select=token&enabled=eq.true&user_id=in.({ids})")]
-                PUSH.to_tokens(admins, f"🛍️ طلب جديد من {o['customer_name']}", f"{float(o['total_egp']):,.0f} ج.م", "admin_orders", f"n{o['id']}")
 
 
 def main():

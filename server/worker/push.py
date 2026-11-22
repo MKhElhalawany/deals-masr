@@ -67,18 +67,19 @@ class Push:
 
     # ───────── deals → topics (users subscribe to deals_min_<their threshold>)
     def deal_events(self, events: list[dict], store_names: dict) -> int:
+        """events from public.ingest_deals: {kind, id, store, title, current_price, original_price, pct}"""
         sent = 0
         now = time.time()
         with self._lock:
             self._sent_hour = [t for t in self._sent_hour if now - t < 3600]
-            for e in events:
-                it = e["item"]
-                pct = it.discount_pct or 0
+            for e in sorted(events, key=lambda x: -float(x["pct"])):
+                pct = float(e["pct"])
+                cur, orig = float(e["current_price"]), float(e["original_price"])
                 drop = e["kind"] == "drop"
-                store = store_names.get(it.store, it.store)
-                body = f"{it.title[:110]}\n{it.current_price:,.0f} ج.م بدل {it.original_price:,.0f}"
+                store = store_names.get(e["store"], e["store"])
+                body = f"{e['title'][:110]}\n{cur:,.0f} ج.م بدل {orig:,.0f}"
                 if pct < 30:
-                    self._low.append(f"-{int(pct)}% {it.title[:40]} — {it.current_price:,.0f} ج.م")
+                    self._low.append(f"-{int(pct)}% {e['title'][:40]} — {cur:,.0f} ج.م")
                     continue
                 lvl = level(pct)
                 if lvl == "hot" and len(self._sent_hour) >= 120:   # protect users from a flood of 30–49% pushes
@@ -88,9 +89,10 @@ class Push:
                          "super": f"⚡ {again}سوبر عرض -{int(pct)}% — قبل ما يخلص",
                          "hot": f"🔥 {again}عرض ساخن -{int(pct)}% على {store}"}[lvl]
                 cond = " || ".join(f"'deals_min_{t}' in topics" for t in THRESHOLDS if t <= pct)
-                ok = self._send({"condition": cond, "android": self._android(it.id),
+                ok = self._send({"condition": cond, "android": self._android(e["id"]),
                                  "data": {"type": "deal", "level": lvl, "title": title, "body": body,
-                                          "deal_id": it.id, "pct": str(pct), "price": str(round(it.current_price)), "sent_at": str(int(time.time() * 1000))}})
+                                          "deal_id": e["id"], "pct": str(pct), "price": str(round(cur)),
+                                          "sent_at": str(int(time.time() * 1000))}})
                 if ok:
                     sent += 1
                     self._sent_hour.append(now)

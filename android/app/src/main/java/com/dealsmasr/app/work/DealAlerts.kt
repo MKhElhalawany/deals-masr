@@ -162,6 +162,7 @@ object DealAlerts {
             .setContentIntent(pending(ctx, id, route))
             .setPriority(if (lvl == Level.URGENT || lvl == Level.SUPER) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(if (lvl == Level.URGENT) NotificationCompat.CATEGORY_ALARM else NotificationCompat.CATEGORY_RECOMMENDATION)
+            .setOnlyAlertOnce(lvl == Level.LOW)   // the quiet summary updates silently
             .setAutoCancel(true)
             .build()
         runCatching { NotificationManagerCompat.from(ctx).notify(id, n) }

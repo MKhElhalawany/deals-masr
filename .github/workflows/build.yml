@@ -77,6 +77,11 @@ jobs:
           python -m pytest -q tests
       - name: Worker image builds
         run: docker build -q -t deals-worker server/worker
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - name: Edge scanner tests (Deno)
+        working-directory: supabase/functions/scan
+        run: deno test -A parsers_test.ts && deno check index.ts
 
   backend:
     needs: plan
@@ -122,6 +127,33 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: python3 tools/supabase_setup.py
+
+  # Free 24/7 scanner on Supabase Edge Functions + pg_cron (no VM / no card). Steps aside when a VM worker runs.
+  edge:
+    needs: [supabase, worker-tests]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.supabase.outputs.url != ''
+    runs-on: ubuntu-latest
+    outputs:
+      report: ${{ steps.e.outputs.report }}
+      working: ${{ steps.e.outputs.working }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - name: Deploy the scan function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          URL: ${{ needs.supabase.outputs.url }}
+        run: |
+          REF=$(echo "$URL" | sed -E 's#https://([^.]+)\..*#\1#')
+          supabase functions deploy scan --project-ref "$REF" --no-verify-jwt --use-api
+      - id: e
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          pip install -q httpx
+          python3 tools/edge_setup.py
 
   # Push notifications: registers the Android app in the owner's Firebase project and outputs its PUBLIC client ids.
   firebase:
@@ -240,7 +272,7 @@ jobs:
 
   # Real measurements (not promises): server write → Realtime WebSocket delivery, FCM accept time, worker status.
   latency:
-    needs: [supabase, deploy-worker]
+    needs: [supabase, deploy-worker, edge]
     if: always() && needs.supabase.result == 'success' && needs.supabase.outputs.url != ''
     runs-on: ubuntu-latest
     outputs:
@@ -265,7 +297,7 @@ jobs:
           exit $rc
 
   report:
-    needs: [plan, backend, supabase-sql, supabase, android, no-device-scraping, worker-tests, deploy-worker, firebase, latency]
+    needs: [plan, backend, supabase-sql, supabase, android, no-device-scraping, worker-tests, deploy-worker, firebase, latency, edge]
     if: always() && needs.plan.outputs.go == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -290,4 +322,7 @@ jobs:
           FIREBASE: ${{ needs.firebase.outputs.enabled }}
           FIREBASE_ERROR: ${{ needs.firebase.outputs.error }}
           LATENCY: ${{ needs.latency.outputs.report }}
+          EDGE: ${{ needs.edge.outputs.report }}
+          EDGE_WORKING: ${{ needs.edge.outputs.working }}
+          R_EDGE: ${{ needs.edge.result }}
         run: python3 tools/pipeline_report.py

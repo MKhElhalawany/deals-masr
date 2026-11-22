@@ -112,4 +112,38 @@ select pg_temp.must_fail($$select public.claim_owner()$$);
 reset role;
 select set_config('request.jwt.claim.sub', '', false);
 select set_config('request.jwt.claims', '', false);
+
+-- deal ingestion: server-only, writes only real changes, creates alert/favourite notifications
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1111111-1111-4111-8111-111111111111', false);
+select pg_temp.must_fail($$select public.ingest_deals('[]'::jsonb, 10)$$);
+select pg_temp.must_fail($$select public.expire_stale_deals(36)$$);
+insert into public.alerts (query, min_discount) values ('rlsprobe phone', 20);
+reset role;
+set role anon;
+select pg_temp.must_fail($$select public.ingest_deals('[]'::jsonb, 10)$$);
+reset role;
+grant usage on schema public to service_role;
+set role service_role;
+select pg_temp.check((public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":700,"original_price":1000},
+  {"id":"amazon:rls-ing-2","store":"amazon","title":"cheap thing","url":"https://x/2","current_price":99,"original_price":100},
+  {"id":"evil:rls-ing-3","store":"evil","title":"bad store","url":"https://x/3","current_price":1,"original_price":100},
+  {"id":"amazon:rls-ing-4","store":"amazon","title":"no https","url":"javascript:x","current_price":1,"original_price":100}]'::jsonb, 10)->>'accepted')::int = 1,
+  'ingest keeps only valid deals ≥ min discount from known stores');
+reset role;
+select pg_temp.check((select count(*) from public.user_notifications where user_id = 'a1111111-1111-4111-8111-111111111111' and deal_id = 'amazon:rls-ing-1' and kind = 'alert') = 1, 'alert match notifies the user');
+update public.deals set updated_at = '2000-01-01' where id = 'amazon:rls-ing-1';
+set role service_role;
+select pg_temp.check(jsonb_array_length(public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":700,"original_price":1000}]'::jsonb, 10)->'events') = 0, 'unchanged deal → no event');
+reset role;
+select pg_temp.check((select updated_at from public.deals where id = 'amazon:rls-ing-1') = '2000-01-01', 'unchanged deal row is NOT rewritten (no Realtime noise)');
+insert into public.favorites (user_id, deal_id) values ('b2222222-2222-4222-8222-222222222222', 'amazon:rls-ing-1');
+set role service_role;
+select pg_temp.check((public.ingest_deals('[{"id":"amazon:rls-ing-1","store":"amazon","title":"RLSPROBE Phone X","url":"https://x/1","current_price":600,"original_price":1000}]'::jsonb, 10)->'events'->0->>'kind') = 'drop', 'price drop detected');
+reset role;
+select pg_temp.check((select count(*) from public.user_notifications where user_id = 'b2222222-2222-4222-8222-222222222222' and kind = 'price_drop') = 1, 'favourite price drop notifies');
+select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1') = 2, 'price history only on changes');
+delete from public.deals where id like 'amazon:rls-ing-%';
+delete from public.alerts where query = 'rlsprobe phone';
+
 select 'ALL RLS TESTS PASSED';

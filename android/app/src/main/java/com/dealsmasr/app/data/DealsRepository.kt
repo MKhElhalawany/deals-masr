@@ -190,7 +190,7 @@ class DealsRepository(
     suspend fun marketplaces(): List<MarketplaceDto> =
         rows(supabase.select("scraper_status", "select=store,ok,message,last_run&order=store.asc")).map {
             val store = it.str("store").orEmpty()
-            MarketplaceDto(store, if (store == "worker") "السيرفر" else storeNames[store] ?: store, true,
+            MarketplaceDto(store, when (store) { "worker" -> "سيرفر Oracle"; "edge" -> "سيرفر Supabase"; else -> storeNames[store] ?: store }, true,
                 (it["ok"] as? JsonPrimitive)?.booleanOrNull ?: false, it.str("message").orEmpty(), epoch(it.str("last_run")))
         }
 

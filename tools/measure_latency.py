@@ -159,14 +159,14 @@ def fcm():
 def worker_status():
     out.append("\n### 🛰️ السيرفر (اكتشاف العروض)")
     rows = httpx.get(f"{URL}/rest/v1/scraper_status?select=store,ok,message,last_run", headers=svc_headers(), timeout=20).json()
-    hb = next((r for r in rows if r["store"] == "worker"), None)
+    hb = next((r for r in rows if r["store"] == "worker"), None) or next((r for r in rows if r["store"] == "edge"), None)
     if not hb:
-        out.append("السيرفر لسه ما اشتغلش (محتاج Oracle VM) — زمن الاكتشاف ما ينفعش يتقاس قبل ما يشتغل.")
+        out.append("السيرفر لسه ما اشتغلش — زمن الاكتشاف ما ينفعش يتقاس قبل ما يشتغل.")
         return
     age = (datetime.now(timezone.utc) - datetime.fromisoformat(hb["last_run"].replace("Z", "+00:00"))).total_seconds()
     out.append(f"آخر نبضة من السيرفر من {age:.0f} ث — {hb['message']}")
     for r in rows:
-        if r["store"] != "worker":
+        if r["store"] not in ("worker", "edge"):
             out.append(f"- {r['store']}: {'✓' if r['ok'] else '⚠️'} {r['message']}")
 
 
