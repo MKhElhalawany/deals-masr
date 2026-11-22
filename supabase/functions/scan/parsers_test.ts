@@ -66,3 +66,8 @@ Deno.test("town team shopify cards", async () => {
   const [items] = parseTownTeam('<div class="card"><a href="/products/polo-shirt?variant=1"><img src="https://cdn.shopify.com/a.jpg" alt="Polo Shirt Navy"></a><span class="price-item--regular"><s>LE 899.00</s></span><span class="price-item--sale">LE 599.00</span></div>');
   assertEquals([items.length, items[0]?.current_price, items[0]?.original_price, items[0]?.url, items[0]?.id.startsWith("townteam:polo-shirt-")], [1, 599, 899, "https://townteam.com/products/polo-shirt", true]);
 });
+Deno.test("amazon discovery accepts language-prefixed links", async () => {
+  const { Robots, categoryLinks } = await import("./discover.ts");
+  const l = categoryLinks("amazon", '<a href="/-/en/s?i=fashion&amp;rh=n%3A18018102031&amp;ref=x">F</a>', 0, new Robots(""));
+  assertEquals(l.length === 1 && l[0].url.startsWith("https://www.amazon.eg/s?rh=n%3A18018102031"), true);
+});

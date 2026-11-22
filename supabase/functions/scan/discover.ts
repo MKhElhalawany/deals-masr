@@ -71,7 +71,7 @@ export function categoryLinks(store: string, html: string, depth: number, robots
     let t: string | null = null;
     if (store === "amazon") {
       // department / category refinements of a discounted listing: /s?...rh=n:<node>...
-      if (url.hostname !== "www.amazon.eg" || url.pathname !== "/s") continue;
+      if (url.hostname !== "www.amazon.eg" || !/^(\/-\/(en|ar))?\/s$/.test(url.pathname)) continue;   // /s or /-/en/s
       const rh = url.searchParams.get("rh") ?? "";
       if (!/n:\d+/.test(rh)) continue;
       const n = new URL("https://www.amazon.eg/s");
