@@ -54,7 +54,8 @@ object Notifier {
         }
         val pi = PendingIntent.getActivity(ctx, id, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(ctx, channel)
-            .setSmallIcon(android.R.drawable.stat_notify_more)
+            .setSmallIcon(com.dealsmasr.app.R.drawable.ic_stat_deal)
+                .setColor(0xFFC9971C.toInt())
             .setContentTitle(title)
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

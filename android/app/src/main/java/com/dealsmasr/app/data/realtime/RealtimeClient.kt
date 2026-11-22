@@ -106,7 +106,7 @@ class RealtimeClient(private val supabase: Supabase, private val json: Json, pri
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 val changes = buildJsonArray {
-                    add(buildJsonObject { put("event", "*"); put("schema", "public"); put("table", "deals"); put("filter", "discount_pct=gte.$minPct") })
+                    add(buildJsonObject { put("event", "*"); put("schema", "public"); put("table", "deals"); put("filter", "deal_pct=gte.$minPct") })
                     listOf("user_notifications" to "INSERT", "orders" to "*", "shein_quotes" to "UPDATE").forEach { (t, e) ->
                         add(buildJsonObject { put("event", e); put("schema", "public"); put("table", t) })
                     }

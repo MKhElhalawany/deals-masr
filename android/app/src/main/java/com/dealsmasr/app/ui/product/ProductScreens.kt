@@ -33,6 +33,9 @@ import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Surface
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -110,7 +113,7 @@ fun ProductScreen(id: String, onBack: () -> Unit) {
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } },
             actions = {
                 deal?.let { d ->
-                    IconButton(onClick = { shareText(ctx, "${d.title}\n${Money.egp(d.currentPrice)} بدل ${Money.egp(d.originalPrice)} (-${d.discountPct.toInt()}%)\n${d.url}") }) {
+                    IconButton(onClick = { shareText(ctx, "${d.title}\n${Money.egp(d.currentPrice)}" + (if (d.hasOriginal) " بدل ${Money.egp(d.originalPrice)}" else "") + " (-${d.discountPct.toInt()}%)\n${d.url}") }) {
                         Icon(Icons.Outlined.Share, "مشاركة")
                     }
                     val fav = d.id in favIds
@@ -136,19 +139,26 @@ fun ProductScreen(id: String, onBack: () -> Unit) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     StoreLabel(d.marketplaceName)
-                    DiscountBadge(d.discountPct, tier, large = true)
+                    DiscountBadge(d.discountPct, tier, large = true, atLeast = !d.hasOriginal)
                     if (!d.active) Text("انتهى العرض", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
                 Text(d.title, style = MaterialTheme.typography.titleMedium)
-                PriceBlock(d.currentPrice, d.originalPrice, d.savings)
+                PriceBlock(d.currentPrice, d.originalPrice, d.savings, minPct = d.discountPct)
+                d.bestPrice?.takeIf { it < d.currentPrice }?.let { bp ->
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
+                        Text("💳 بالكوبونات أو عروض البنوك على ${d.marketplaceName} ممكن توصل لـ ${Money.egp(bp)} (خصم إضافي ${Money.plain(d.currentPrice - bp)})",
+                            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(10.dp))
+                    }
+                }
                 d.rating?.let { r ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Filled.Star, null, tint = Color(0xFFF5A623), modifier = Modifier.size(18.dp))
                         Text(" ${"%.1f".format(r)}" + (d.ratingCount?.let { " ($it تقييم)" } ?: ""))
                     }
                 }
-                Text("آخر تحقق من السعر: ${relativeTime(d.lastChecked)}", style = MaterialTheme.typography.bodySmall,
+                Text("الخصم ده نازل من ${relativeTime(d.dealSince)}", style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                VerifyDeal(d.id)
                 Button(onClick = { openUrl(ctx, d.url) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     Icon(Icons.AutoMirrored.Filled.OpenInNew, null)
                     Spacer(Modifier.width(8.dp))
@@ -228,6 +238,58 @@ fun FavoritesScreen(onBack: () -> Unit, onProduct: (String) -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+
+/** "يستاهل ولا لأ؟": price history + same product in other stores + an honest verdict (AI explanation when available). */
+@Composable
+fun VerifyDeal(id: String) {
+    val c = (LocalContext.current.applicationContext as com.dealsmasr.app.DealsApp).container
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var loading by remember(id) { mutableStateOf(false) }
+    var result by remember(id) { mutableStateOf<com.dealsmasr.app.data.DealsRepository.Verdict?>(null) }
+    var err by remember(id) { mutableStateOf<String?>(null) }
+    val r = result
+    if (r == null) {
+        OutlinedButton(onClick = {
+            loading = true; err = null
+            scope.launch {
+                runCatching { c.deals.verify(id) }.onSuccess { result = it }.onFailure { err = it.userMessage() }
+                loading = false
+            }
+        }, enabled = !loading, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) {
+            if (loading) { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp); Spacer(Modifier.width(8.dp)); Text("بنراجع السعر…") }
+            else Text("🔍 يستاهل ولا لأ؟", fontWeight = FontWeight.Bold)
+        }
+        err?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+        return
+    }
+    val color = when (r.code) {
+        "excellent" -> com.dealsmasr.app.ui.theme.Success
+        "good" -> Color(0xFF2E9E6B)
+        "normal" -> Color(0xFFC9A227)
+        "insufficient" -> MaterialTheme.colorScheme.onSurfaceVariant
+        else -> MaterialTheme.colorScheme.error
+    }
+    Card(shape = RoundedCornerShape(20.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(r.verdict, color = color, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                r.score?.let { Text("$it/10", color = color, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black) }
+            }
+            Text(r.explanation, style = MaterialTheme.typography.bodyMedium)
+            if (r.lowest != null && r.observations > 0) Text(
+                "أقل سعر شفناه ${Money.egp(r.lowest)} · أعلى سعر ${Money.egp(r.highest ?: r.lowest)} · بنتابعه من ${maxOf(1, (r.days ?: 0.0).toInt())} يوم",
+                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            r.cheaper?.let { ch ->
+                Button(onClick = { openUrl(ctx, ch.url) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("أرخص على ${r.cheaperStore}: ${Money.egp(ch.currentPrice)}")
+                }
+            }
+            if (!r.ai) Text("الحكم محسوب من بياناتنا مباشرة.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

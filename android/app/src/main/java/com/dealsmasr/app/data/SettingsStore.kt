@@ -87,8 +87,9 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val admin = booleanPreferencesKey("admin_mode")
         val celebrated = stringPreferencesKey("celebrated_orders")
         val adminSeen = stringPreferencesKey("admin_last_order_seen")
-        val syncCursor = stringPreferencesKey("deals_sync_cursor")
-        val lastFullSync = longPreferencesKey("deals_last_full_sync")
+        // v2: forces one clean full re-download (drops deals cached before the price-reading fixes)
+        val syncCursor = stringPreferencesKey("deals_sync_cursor_v2")
+        val lastFullSync = longPreferencesKey("deals_last_full_sync_v2")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }

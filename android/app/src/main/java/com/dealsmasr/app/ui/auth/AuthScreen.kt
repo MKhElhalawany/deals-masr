@@ -2,6 +2,8 @@ package com.dealsmasr.app.ui.auth
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -110,7 +112,7 @@ fun AuthScreen(notConfigured: Boolean) {
 
     Box(
         Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Brand, Color(0xFF8E2A0C))))
+            .background(Brush.verticalGradient(listOf(Brand, Color(0xFF0A1F4A), Color(0xFF060F24))))
             .systemBarsPadding().imePadding(),
         contentAlignment = Alignment.Center,
     ) {
@@ -119,9 +121,12 @@ fun AuthScreen(notConfigured: Boolean) {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Icon(Icons.Outlined.LocalOffer, null, tint = Color.White, modifier = Modifier.size(56.dp))
-            Text("عروض مصر", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-            Text("أحسن العروض من أمازون وجوميا ونون + SHEIN لحد باب البيت", color = Color.White.copy(alpha = 0.9f),
+            // owner login is hidden: long-press the logo
+            Icon(androidx.compose.ui.res.painterResource(com.dealsmasr.app.R.drawable.ic_launcher_foreground), null, tint = Color.Unspecified, modifier = Modifier.size(96.dp).pointerInput(Unit) {
+                detectTapGestures(onLongPress = { mode = Mode.OWNER; codeSent = false; code = ""; error = null; info = null })
+            })
+            Text("عروض مصر", color = com.dealsmasr.app.ui.theme.GoldLight, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+            Text("كل خصومات أمازون ونون وتاون تيم في مكان واحد + SHEIN لحد باب البيت", color = Color.White.copy(alpha = 0.9f),
                 textAlign = TextAlign.Center)
             Card(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
                 AnimatedContent(mode, label = "mode") { m ->
@@ -177,9 +182,6 @@ fun AuthScreen(notConfigured: Boolean) {
                                 }
                                 TextButton(onClick = { mode = Mode.RESET; error = null; info = null }, Modifier.fillMaxWidth()) {
                                     Text("نسيت كلمة السر؟")
-                                }
-                                TextButton(onClick = { mode = Mode.OWNER; codeSent = false; code = ""; error = null; info = null }, Modifier.fillMaxWidth()) {
-                                    Text("صاحب المتجر؟ ادخل بلينك على الإيميل", style = MaterialTheme.typography.labelMedium)
                                 }
                             }
                             else -> TextButton(onClick = { mode = Mode.LOGIN; codeSent = false; error = null }, Modifier.fillMaxWidth()) {

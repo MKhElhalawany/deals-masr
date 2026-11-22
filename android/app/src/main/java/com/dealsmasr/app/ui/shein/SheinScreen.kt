@@ -150,11 +150,11 @@ class SheinViewModel(private val repo: SheinRepository, settings: SettingsStore)
     fun retry(item: CartItemEntity) = repo.retry(item)
 }
 
-const val SHEIN_SLOGAN = "منتجات SHEIN بدون جمارك – والتوصيل لحد باب البيت"
+const val SHEIN_SLOGAN = "خصومات تصل لـ 70% · منتجات SHEIN بدون جمارك والتوصيل لحد باب البيت"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: () -> Unit) {
+fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: () -> Unit, onOrders: () -> Unit = {}) {
     val vm = appViewModel { SheinViewModel(it.shein, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
@@ -181,6 +181,11 @@ fun SheinScreen(sharedText: String?, onSharedConsumed: () -> Unit, onCheckout: (
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { pad ->
         LazyColumn(Modifier.padding(pad), contentPadding = PaddingValues(bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { SheinHero() }
+            item {
+                androidx.compose.material3.OutlinedButton(onClick = onOrders, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Text("📦 طلباتي ومتابعة الشحن")
+                }
+            }
             item {
                 Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), shape = RoundedCornerShape(20.dp)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {

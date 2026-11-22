@@ -214,6 +214,9 @@ class Supabase(private val store: SessionStore, private val json: Json) {
     }
 
     // ───────────── PostgREST
+    /** Calls one of our Edge Functions as the signed-in user. */
+    suspend fun fn(name: String, body: JsonObject): String = call("POST", "/functions/v1/$name", body.toString(), token())
+
     suspend fun select(table: String, query: String): String = call("GET", "/rest/v1/$table?$query", null, token())
 
     suspend fun insert(table: String, row: JsonObject): String =

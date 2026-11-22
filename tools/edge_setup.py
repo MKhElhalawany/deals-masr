@@ -105,7 +105,7 @@ drop trigger if exists call_scan on public.orders;
 create trigger call_scan after insert or update of status on public.orders for each row execute function public.tg_call_scan();
 """)
     # free plan = 500k runs/month: noon every 20 s (2 pages) + amazon every 30 s ≈ 216k; jumia (Cloudflare-blocked) every 5 min
-    schedules = {"amazon": "30 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *", "townteam": "* * * * *"}
+    schedules = {"amazon": "30 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *", "townteam": "*/2 * * * *"}
     for s, every in schedules.items():
         S.sql(ref, f"select cron.schedule('scan-{s}', '{every}', $c$select app_private.call_scan('{{\"job\":\"scan\",\"store\":\"{s}\"}}'::jsonb)$c$)")
     # discovery queue seeds (idempotent): store-wide discounted listings, sale pages, category entry points

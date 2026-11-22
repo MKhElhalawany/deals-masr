@@ -63,7 +63,7 @@ async function search(b: any, uid: string) {
   const rows = await rest("GET", `deals?${f.join("&")}`);
   // live search in the stores (server side) for new queries; results arrive in the DB within seconds
   let live = false;
-  if (q.length >= 2 && page === 1 && rows.length < 10) {
+  if (!b.no_live && q.length >= 2 && page === 1 && rows.length < 10) {
     const lq = en || q;
     await rest("POST", "search_requests", [{ user_id: uid, query: lq.slice(0, 80), ...(stores.length ? { stores } : {}) }], "return=minimal")
       .then(() => { live = true; }).catch(() => {});

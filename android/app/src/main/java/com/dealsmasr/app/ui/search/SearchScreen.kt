@@ -91,6 +91,8 @@ data class SearchState(
     val loadingMore: Boolean = false,
     val error: String? = null,
     val searched: Boolean = false,
+    /** the server is still checking the stores live for this query (results can still arrive) */
+    val checkingStores: Boolean = false,
 )
 
 class SearchViewModel(private val repo: DealsRepository) : ViewModel() {
@@ -109,22 +111,26 @@ class SearchViewModel(private val repo: DealsRepository) : ViewModel() {
         if (s.query.isBlank()) return
         job?.cancel()
         job = viewModelScope.launch {
-            _state.update { it.copy(loading = true, error = null, searched = true) }
-            runCatching { repo.search(s.query, s.filters, s.sort.apiKey, 1, askServer = true) }
-                .onSuccess { p ->
+            _state.update { it.copy(loading = true, error = null, searched = true, checkingStores = false) }
+            var live = false
+            runCatching { repo.searchApi(s.query, s.filters, s.sort.apiKey, 1, askServer = true) }
+                .onSuccess { r ->
+                    live = r.live
                     _state.update {
-                        it.copy(loading = false, results = p.items, total = p.total, page = 1,
-                            categories = (it.categories + p.categories).distinct(), unavailableStores = p.storesUnavailable)
+                        it.copy(loading = false, results = r.page.items, total = r.page.total, page = 1, checkingStores = r.live,
+                            categories = (it.categories + r.page.categories).distinct(), unavailableStores = emptyList())
                     }
                 }
                 .onFailure { e -> _state.update { it.copy(loading = false, error = e.userMessage()) } }
-            // our server is searching the stores right now — pick up its results as they land
-            for (wait in listOf(15_000L, 30_000L, 45_000L)) {
+            if (!live) return@launch
+            // the server is checking the stores live — pick up new results as they land (a few seconds)
+            for (wait in listOf(4_000L, 5_000L, 7_000L, 10_000L)) {
                 kotlinx.coroutines.delay(wait)
-                runCatching { repo.search(s.query, s.filters, s.sort.apiKey, 1) }.onSuccess { p ->
-                    _state.update { if (p.items.size >= it.results.size) it.copy(results = p.items, total = p.total) else it }
+                runCatching { repo.searchApi(s.query, s.filters, s.sort.apiKey, 1, askServer = false) }.onSuccess { r ->
+                    _state.update { if (r.page.items.size >= it.results.size) it.copy(results = r.page.items, total = r.page.total) else it }
                 }
             }
+            _state.update { it.copy(checkingStores = false) }
         }
     }
 
@@ -215,9 +221,10 @@ fun SearchScreen(initialQuery: String?, onProduct: (String) -> Unit) {
                 s.error != null -> ErrorState(s.error!!, vm::search)
                 !s.searched -> MessageState(Icons.Outlined.Search, "ابحث في كل المتاجر مرة واحدة",
                     "اكتب اسم المنتج واختار المتاجر ونسبة الخصم اللي تناسبك")
-                s.results.isEmpty() -> MessageState(Icons.Outlined.SearchOff, "بندوّر لك في المتاجر دلوقتي…",
-                    "سيرفرنا بيدوّر في أمازون وجوميا ونون — النتايج هتظهر هنا خلال ثواني. لو مفيش، اعمل تنبيه وهنبلغك أول ما يتوفر عرض.",
-                    "نبهني لما يتوفر عرض", { showAlert = true })
+                s.results.isEmpty() && s.checkingStores -> SkeletonGrid()
+                s.results.isEmpty() -> MessageState(Icons.Outlined.SearchOff, "مفيش عروض على «${s.query.trim()}» دلوقتي",
+                    "أول ما ينزل عليه خصم في أي متجر هنبلغك فوراً.",
+                    "ابلغني أول ما يتوفر", { showAlert = true })
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(160.dp),
                     contentPadding = PaddingValues(12.dp),

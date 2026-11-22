@@ -72,7 +72,7 @@ class DealsRepository(
     private var lastSyncIso: String? = null
     private var lastFullSync = 0L
     private var syncLoaded = false
-    private val cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,rating,rating_count,active,deal_since,last_checked,updated_at"
+    private val cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,deal_pct,best_price,rating,rating_count,active,deal_since,last_checked,updated_at"
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
     private fun epoch(iso: String?): Long = iso?.let { runCatching { OffsetDateTime.parse(it).toEpochSecond() }.getOrNull() } ?: 0L
@@ -87,8 +87,9 @@ class DealsRepository(
             id = o.str("id").orEmpty(), marketplace = store, marketplaceName = storeNames[store] ?: store,
             title = o.str("title").orEmpty(), imageUrl = o.str("image_url"), url = o.str("url").orEmpty(),
             category = o.str("category"), rating = o.num("rating"), ratingCount = (o["rating_count"] as? JsonPrimitive)?.intOrNull,
-            originalPrice = orig, currentPrice = cur, discountPct = o.num("discount_pct") ?: 0.0,
-            savings = Math.round((orig - cur) * 100) / 100.0,
+            originalPrice = orig, currentPrice = cur, discountPct = o.num("deal_pct") ?: o.num("discount_pct") ?: 0.0,
+            savings = if (orig > cur) Math.round((orig - cur) * 100) / 100.0 else 0.0,
+            bestPrice = o.num("best_price"),
             dealSince = epoch(o.str("deal_since")), lastChecked = epoch(o.str("last_checked")),
             active = (o["active"] as? JsonPrimitive)?.booleanOrNull ?: true,
         )
@@ -108,7 +109,7 @@ class DealsRepository(
         val full = lastSyncIso == null || before.isEmpty() || now - lastFullSync > 24 * 3_600_000L
         val list = ArrayList<JsonObject>()
         if (full) {
-            list += rows(supabase.select("deals", "select=$cols&active=eq.true&order=discount_pct.desc&limit=400"))
+            list += rows(supabase.select("deals", "select=$cols&active=eq.true&order=deal_pct.desc.nullslast&limit=400"))
         } else {
             // gte (not gt): rows written in one batch share a timestamp; re-reading the boundary row is harmless
             var cursor = lastSyncIso!!
@@ -163,34 +164,75 @@ class DealsRepository(
     suspend fun refreshIfDue(maxAgeMillis: Long): List<DealEvent> =
         if (System.currentTimeMillis() - settings.current().lastRefresh >= maxAgeMillis) refresh() else emptyList()
 
-    /** Searches the server's deal database; [askServer] also queues a fresh store search on the worker. */
-    suspend fun search(query: String, filters: SearchFilters, sort: String, page: Int = 1, askServer: Boolean = false): DealPage {
-        if (askServer && page == 1 && query.trim().length >= 2) runCatching {
-            supabase.insert("search_requests", buildJsonObject {
-                put("query", query.trim().take(80))
-                if (filters.stores.isNotEmpty()) put("stores", buildJsonArray { filters.stores.forEach { add(JsonPrimitive(it)) } })
+    /** Live state of the last search: true while the server is still checking the stores for this query. */
+    data class SearchResult(val page: DealPage, val live: Boolean, val english: String?)
+
+    /**
+     * Search through our API: Arabic or English, any words (Arabic is translated for the stores' English titles),
+     * filters and sorting on the server. [askServer] lets the server also search the stores live for new queries.
+     */
+    suspend fun searchApi(query: String, filters: SearchFilters, sort: String, page: Int = 1, askServer: Boolean = false): SearchResult {
+        val body = buildJsonObject {
+            put("action", "search"); put("q", query.trim().take(100)); put("page", page)
+            put("sort", when (sort) { "price_asc", "price_desc", "newest" -> sort; else -> "discount" })
+            if (filters.stores.isNotEmpty()) put("stores", buildJsonArray { filters.stores.forEach { add(JsonPrimitive(it)) } })
+            filters.minDiscount?.takeIf { it > 0 }?.let { put("min_pct", it) }
+            filters.minPrice?.let { put("min_price", it) }
+            filters.maxPrice?.let { put("max_price", it) }
+            if (!askServer) put("no_live", true)
+        }
+        val o = json.parseToJsonElement(supabase.fn("api", body)).jsonObject
+        o.str("error")?.let { throw IllegalStateException(it) }
+        val items = (o["items"]?.jsonArray ?: JsonArray(emptyList())).map { toDeal(it.jsonObject) }
+        dealDao.upsertAll(items.filter { it.active }.map { it.toEntity() })
+        val size = 30
+        val more = (o["has_more"] as? JsonPrimitive)?.booleanOrNull == true
+        return SearchResult(
+            DealPage(total = (page - 1) * size + items.size + if (more) 1 else 0, page = page, pageSize = size, items = items,
+                categories = items.mapNotNull { it.category }.distinct()),
+            live = (o["live"] as? JsonPrimitive)?.booleanOrNull == true, english = o.str("english"))
+    }
+
+    // ───────── "يستاهل ولا لأ؟"
+    data class Verdict(val verdict: String, val code: String, val score: Int?, val explanation: String, val ai: Boolean,
+                       val lowest: Double?, val highest: Double?, val days: Double?, val observations: Int,
+                       val cheaper: DealDto?, val cheaperStore: String?)
+
+    suspend fun verify(id: String): Verdict {
+        val o = json.parseToJsonElement(supabase.fn("api", buildJsonObject { put("action", "verify"); put("deal_id", id) })).jsonObject
+        o.str("error")?.let { throw IllegalStateException(it) }
+        val f = o["facts"] as? JsonObject
+        val ch = o["cheaper"] as? JsonObject
+        val cheaper = ch?.let {
+            val st = it.str("store").orEmpty()
+            DealDto(id = it.str("id").orEmpty(), marketplace = st, marketplaceName = storeNames[st] ?: st, title = it.str("title").orEmpty(),
+                imageUrl = it.str("image_url"), url = it.str("url").orEmpty(), originalPrice = 0.0, currentPrice = it.num("price") ?: 0.0,
+                discountPct = 0.0, savings = 0.0, lastChecked = 0)
+        }
+        return Verdict(o.str("verdict").orEmpty(), o.str("code").orEmpty(), (o["score"] as? JsonPrimitive)?.intOrNull,
+            o.str("explanation").orEmpty(), (o["ai"] as? JsonPrimitive)?.booleanOrNull == true,
+            f?.num("lowest_seen"), f?.num("highest_seen"), f?.num("days_tracked"), (f?.get("observations") as? JsonPrimitive)?.intOrNull ?: 0,
+            cheaper, cheaper?.marketplaceName)
+    }
+
+    // ───────── assistant
+    data class ChatReply(val text: String, val products: List<DealDto>, val limited: Boolean)
+
+    suspend fun chat(history: List<Pair<Boolean, String>>): ChatReply {
+        val body = buildJsonObject {
+            put("action", "chat")
+            put("messages", buildJsonArray {
+                history.takeLast(10).forEach { (mine, t) -> add(buildJsonObject { put("role", if (mine) "user" else "assistant"); put("text", t) }) }
             })
         }
-        val q = StringBuilder("select=$cols&active=eq.true")
-        val words = query.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.take(5)
-        if (words.isNotEmpty()) q.append("&and=(").append(words.joinToString(",") { "title.ilike.*${enc(it.replace(",", " ").replace("(", "").replace(")", ""))}*" }).append(")")
-        if (filters.stores.isNotEmpty()) q.append("&store_id=in.(").append(filters.stores.joinToString(",")).append(")")
-        (filters.minDiscount?.takeIf { it > 0 } ?: settings.current().config?.minDiscountPct?.toInt())?.let { q.append("&discount_pct=gte.$it") }
-        filters.minPrice?.let { q.append("&current_price=gte.$it") }
-        filters.maxPrice?.let { q.append("&current_price=lte.$it") }
-        filters.category?.let { q.append("&category=eq.${enc(it)}") }
-        val order = when (sort) {
-            "price_asc" -> "current_price.asc"; "price_desc" -> "current_price.desc"; "newest" -> "deal_since.desc"
-            "popular" -> "rating_count.desc.nullslast"; else -> "discount_pct.desc"
-        }
-        val size = 30
-        q.append("&order=$order&limit=${size + 1}&offset=${(page - 1) * size}")
-        val items = rows(supabase.select("deals", q.toString())).map { toDeal(it) }
-        dealDao.upsertAll(items.map { it.toEntity() })
-        val pageItems = items.take(size)
-        return DealPage(total = (page - 1) * size + pageItems.size + if (items.size > size) 1 else 0, page = page,
-            pageSize = size, items = pageItems, categories = pageItems.mapNotNull { it.category }.distinct())
+        val o = json.parseToJsonElement(supabase.fn("api", body)).jsonObject
+        o.str("error")?.let { throw IllegalStateException(it) }
+        val products = (o["products"]?.jsonArray ?: JsonArray(emptyList())).map { toDeal(it.jsonObject) }
+        return ChatReply(o.str("reply").orEmpty(), products, (o["limited"] as? JsonPrimitive)?.booleanOrNull == true)
     }
+
+    suspend fun search(query: String, filters: SearchFilters, sort: String, page: Int = 1, askServer: Boolean = false): DealPage =
+        searchApi(query, filters, sort, page, askServer).page
 
     suspend fun product(id: String): DealDto {
         val d = rows(supabase.select("deals", "select=$cols&id=eq.${enc(id)}")).firstOrNull()?.let { toDeal(it) }

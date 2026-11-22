@@ -76,7 +76,12 @@ data class DealDto(
     @SerialName("last_checked") val lastChecked: Long,
     val active: Boolean = true,
     val history: List<PricePointDto> = emptyList(),
-) : Sortable
+    /** lower price with coupons / bank offers shown by the store (a note; the deal price is currentPrice) */
+    @SerialName("best_price") val bestPrice: Double? = null,
+) : Sortable {
+    /** true when the store showed a crossed-out price; false = "X% off or more" without an old price (Amazon) */
+    val hasOriginal: Boolean get() = originalPrice > currentPrice
+}
 
 @Serializable
 data class DealPage(

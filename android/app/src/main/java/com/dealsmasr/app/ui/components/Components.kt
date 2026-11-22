@@ -84,10 +84,10 @@ fun NetImage(url: String?, modifier: Modifier = Modifier, contentScale: ContentS
 }
 
 @Composable
-fun DiscountBadge(pct: Double, tier: String?, modifier: Modifier = Modifier, large: Boolean = false) {
+fun DiscountBadge(pct: Double, tier: String?, modifier: Modifier = Modifier, large: Boolean = false, atLeast: Boolean = false) {
     Surface(color = tierColor(tier), shape = RoundedCornerShape(8.dp), modifier = modifier) {
         Text(
-            text = "-${pct.toInt()}%" + if (tier == "hot" || tier == "super" || tier == "mega") " 🔥" else "",
+            text = "-${pct.toInt()}%" + (if (atLeast) "+" else "") + if (tier == "hot" || tier == "super" || tier == "mega") " 🔥" else "",
             color = Color.White,
             style = if (large) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
@@ -97,10 +97,15 @@ fun DiscountBadge(pct: Double, tier: String?, modifier: Modifier = Modifier, lar
 }
 
 @Composable
-fun PriceBlock(current: Double, original: Double, savings: Double, compact: Boolean = false) {
+fun PriceBlock(current: Double, original: Double, savings: Double, compact: Boolean = false, minPct: Double? = null) {
     Column {
         Text(Money.egp(current), style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.headlineSmall,
             color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+        if (original <= current) {   // store shows a discount but no crossed-out price (Amazon)
+            Text("خصم ${(minPct ?: 10.0).toInt()}% أو أكتر", style = MaterialTheme.typography.labelSmall,
+                color = com.dealsmasr.app.ui.theme.Success, fontWeight = FontWeight.SemiBold)
+            return@Column
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(Money.egp(original), style = MaterialTheme.typography.bodySmall, textDecoration = TextDecoration.LineThrough,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -128,7 +133,7 @@ fun ProductCard(
         Box {
             NetImage(deal.imageUrl, Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)),
                 contentScale = ContentScale.Fit)
-            DiscountBadge(deal.discountPct, deal.tier, Modifier.align(Alignment.TopStart).padding(8.dp))
+            DiscountBadge(deal.discountPct, deal.tier, Modifier.align(Alignment.TopStart).padding(8.dp), atLeast = !deal.hasOriginal)
             IconButton(onClick = onFavorite, modifier = Modifier.align(Alignment.TopEnd)) {
                 Box(Modifier.size(32.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
                     Icon(if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, contentDescription = "مفضلة",
@@ -140,7 +145,7 @@ fun ProductCard(
             StoreLabel(deal.marketplaceName)
             Text(deal.title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.height(40.dp))
-            PriceBlock(deal.currentPrice, deal.originalPrice, deal.savings, compact = true)
+            PriceBlock(deal.currentPrice, deal.originalPrice, deal.savings, compact = true, minPct = deal.discountPct)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 deal.rating?.let {
                     Icon(Icons.Filled.Star, null, tint = Color(0xFFF5A623), modifier = Modifier.size(14.dp))

@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -129,7 +131,14 @@ fun HomeScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("عروض مصر", style = MaterialTheme.typography.titleLarge) },
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(androidx.compose.ui.res.painterResource(com.dealsmasr.app.R.drawable.ic_launcher_foreground), null,
+                            tint = androidx.compose.ui.graphics.Color.Unspecified, modifier = Modifier.size(40.dp))
+                        Text("عروض مصر", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black,
+                            color = MaterialTheme.colorScheme.secondary.takeIf { androidx.compose.foundation.isSystemInDarkTheme() } ?: MaterialTheme.colorScheme.primary)
+                    }
+                },
                 navigationIcon = { IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "الإعدادات") } },
                 actions = { IconButton(onClick = onFavorites) { Icon(Icons.Outlined.FavoriteBorder, "المفضلة") } },
             )
@@ -147,7 +156,7 @@ fun HomeScreen(
                     }
                     s.deals.isEmpty() -> item {
                         MessageState(Icons.Outlined.LocalOffer, "لا توجد عروض موثقة حالياً",
-                            "سيرفرنا بيتابع أمازون وجوميا ونون 24 ساعة، والعروض بتظهر هنا أول بأول. اسحب للتحديث.")
+                            "سيرفرنا بيتابع أمازون ونون وتاون تيم 24 ساعة، والعروض بتظهر هنا أول بأول. اسحب للتحديث.")
                     }
                     else -> {
                         item {
@@ -197,7 +206,7 @@ private fun SearchEntry(onClick: () -> Unit) {
         Row(Modifier.padding(horizontal = 16.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, null)
             Spacer(Modifier.width(10.dp))
-            Text("ابحث عن منتج في أمازون وجوميا ونون…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("ابحث عن أي منتج… قلاية، سماعة، iPhone", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

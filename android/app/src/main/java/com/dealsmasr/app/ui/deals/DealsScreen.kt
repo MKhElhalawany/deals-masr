@@ -49,7 +49,7 @@ import com.dealsmasr.app.ui.components.SkeletonCard
 import com.dealsmasr.app.ui.home.DealsViewModel
 import com.dealsmasr.app.ui.theme.tierColor
 
-val STORES = listOf("amazon" to "أمازون", "jumia" to "جوميا", "noon" to "نون")
+val STORES = listOf("amazon" to "أمازون", "noon" to "نون", "townteam" to "تاون تيم", "jumia" to "جوميا")
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -8,6 +8,8 @@ import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.ShoppingBag
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Search
@@ -49,7 +51,7 @@ private val TABS = listOf(
     Tab("deals", "العروض", Icons.Outlined.LocalOffer, Icons.Filled.LocalOffer),
     Tab("search", "البحث", Icons.Outlined.Search, Icons.Filled.Search),
     Tab("shein", "SHEIN", Icons.Outlined.ShoppingBag, Icons.Filled.ShoppingBag),
-    Tab("orders", "طلباتي", Icons.Outlined.ReceiptLong, Icons.Filled.ReceiptLong),
+    Tab("assistant", "المساعد", Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
 )
 
 /** Navigation requests coming from outside Compose (share sheet, notification taps). */
@@ -113,9 +115,12 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                 SearchScreen(e.arguments?.getString("q"), onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
             }
             composable("shein") {
-                SheinScreen(sharedText, onSharedConsumed, onCheckout = { nav.navigate("checkout") })
+                SheinScreen(sharedText, onSharedConsumed, onCheckout = { nav.navigate("checkout") }, onOrders = { nav.navigate("orders") })
             }
             composable("orders") { OrdersScreen(onOrder = { nav.navigate("order/$it") }) }
+            composable("assistant") {
+                com.dealsmasr.app.ui.assistant.AssistantScreen(onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
+            }
             composable("product/{id}") { e ->
                 ProductScreen(java.net.URLDecoder.decode(e.arguments?.getString("id").orEmpty(), "UTF-8"), onBack = { nav.popBackStack() })
             }

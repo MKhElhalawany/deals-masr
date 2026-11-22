@@ -97,7 +97,8 @@ object DealAlerts {
             val body = "${d.title}\n${Money.egp(d.currentPrice)} بدل ${Money.egp(d.originalPrice)} (وفّر ${Money.egp(d.savings)})"
             val id = d.id.hashCode()
             val n = NotificationCompat.Builder(ctx, lvl.channel)
-                .setSmallIcon(android.R.drawable.stat_notify_more)
+                .setSmallIcon(com.dealsmasr.app.R.drawable.ic_stat_deal)
+                .setColor(0xFFC9971C.toInt())
                 .setContentTitle(title)
                 .setContentText(body.substringBefore('\n'))
                 .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -113,7 +114,8 @@ object DealAlerts {
             val style = NotificationCompat.InboxStyle()
             recentLow.forEach { style.addLine(it) }
             val n = NotificationCompat.Builder(ctx, Level.LOW.channel)
-                .setSmallIcon(android.R.drawable.stat_notify_more)
+                .setSmallIcon(com.dealsmasr.app.R.drawable.ic_stat_deal)
+                .setColor(0xFFC9971C.toInt())
                 .setContentTitle("خصومات جديدة: $lowCount")
                 .setContentText(recentLow.firstOrNull())
                 .setStyle(style)
@@ -155,7 +157,8 @@ object DealAlerts {
         val route = data["route"] ?: dealId?.let { "product/$it" } ?: "deals"
         val channel = if (data["type"] == "personal" && tag != null && (tag.startsWith("c") || tag.startsWith("n"))) Notifier.CH_ORDERS else lvl.channel
         val n = NotificationCompat.Builder(ctx, channel)
-            .setSmallIcon(android.R.drawable.stat_notify_more)
+            .setSmallIcon(com.dealsmasr.app.R.drawable.ic_stat_deal)
+                .setColor(0xFFC9971C.toInt())
             .setContentTitle(title)
             .setContentText(body.substringBefore('\n'))
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
