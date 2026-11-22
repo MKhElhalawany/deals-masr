@@ -27,10 +27,14 @@ Deno.test.ignore("noon generic (layout detector no longer used for noon)", () =>
   assertEquals([i.id.startsWith("noon:N70012345V-"), i.current_price, i.original_price, i.title, i.url],
     [true, 2499, 3999, "Tefal Air Fryer 4.2L Black", "https://www.noon.com/egypt-ar/tefal-air-fryer/N70012345V/p/?o=abc"]);
 });
-Deno.test("noon json", () => {
-  const html = '<script>self.__next_f.push([1,"{\\"sku\\":\\"N70099887V\\",\\"name\\":\\"Blender Pro 600W\\",\\"url\\":\\"blender-pro\\",\\"price\\":2000,\\"sale_price\\":1500,\\"image_key\\":\\"v1/abc\\"}"])</script>';
+Deno.test("noon embedded product list (real format)", () => {
+  const html = '<script>x=$R[1886]=[$R[1887]={offer_code:"a16c",catalog_sku:"Z0F8-1",sku:"Z0F84C40568EE2C420682Z",brand:"KIESLECT",name:"BioKoop Tracker \\"Pro\\" Watch",plp_specifications:$R[1888]={"Band":"Fabric"},price:3999,sale_price:3499,url:"biokoop-tracker",image_key:"pzsku/Z0F8/45/a",image_url:"https://f.nooncdn.com/p/pzsku/Z0F8/45/a.jpg",is_buyable:!0,stock:3},$R[1890]={offer_code:"b2",sku:"ZNOSALE",name:"Plain",price:500,sale_price:null,url:"plain"},$R[1891]={offer_code:"c3",sku:"ZRANK18",name:"Screen Protector #18 in Mobiles",price:150,sale_price:129.19,url:"sp",image_url:"https://f.nooncdn.com/p/x.jpg",is_buyable:!0}]</script>';
   const [items] = parseNoon(html);
-  assertEquals([items.length, items[0]?.id, items[0]?.current_price, items[0]?.original_price], [1, "noon:N70099887V", 1500, 2000]);
+  assertEquals(items.map((i) => [i.id, i.current_price, i.original_price, i.url]), [
+    ["noon:Z0F84C40568EE2C420682Z", 3499, 3999, "https://www.noon.com/egypt-en/biokoop-tracker/Z0F84C40568EE2C420682Z/p/"],
+    ["noon:ZRANK18", 129.19, 150, "https://www.noon.com/egypt-en/sp/ZRANK18/p/"]]);
+  assertEquals(items[0].title, 'BioKoop Tracker "Pro" Watch');
+  assertEquals(items[0].image_url, "https://f.nooncdn.com/p/pzsku/Z0F8/45/a.jpg");
 });
 Deno.test("amazon deal candidate + product page", async () => {
   const { parseAmazon, parseAmazonProduct, amazonCandidates } = await import("./parsers.ts");

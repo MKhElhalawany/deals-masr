@@ -121,20 +121,30 @@ export function parseNoon(html: string): [Item[], number] {
   return [items, Math.max(cards, items.length)];
 }
 
-/** Products embedded as JSON (Next.js data): objects with sku + name + price + sale_price. */
+/** noon's server-rendered product list ("hits": objects with sku, name, price, sale_price, url, image_url). */
 export function noonJson(html: string): Item[] {
   const out = new Map<string, Item>();
-  const re = /\{[^{}]*?"sku"\s*:\s*"([A-Z0-9]{6,})"[^{}]*?\}/g;
-  for (const m of html.replace(/\\+"/g, '"').matchAll(re)) {
-    const o = m[0];
-    const name = o.match(/"name"\s*:\s*"([^"]{4,300})"/)?.[1];
-    const p = parseFloat(o.match(/"price"\s*:\s*"?([\d.]+)/)?.[1] ?? "");
-    const sp = parseFloat(o.match(/"sale_price"\s*:\s*"?([\d.]+)/)?.[1] ?? "");
-    if (!name || !(p > 0) || !(sp > 0) || sp >= p) continue;
-    const slug = o.match(/"url"\s*:\s*"([^"]+)"/)?.[1] ?? "product";
-    const img = o.match(/"image_key"\s*:\s*"([^"]+)"/)?.[1];
-    out.set(m[1], { id: `noon:${m[1]}`, store: "noon", title: name, url: `https://www.noon.com/egypt-ar/${slug}/${m[1]}/p/`,
-      image_url: img ? `https://f.nooncdn.com/p/${img}.jpg` : null, current_price: sp, original_price: p });
+  const str = (chunk: string, key: string) => {
+    const m = chunk.match(new RegExp(`[{,]\\s*"?${key}"?\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+    if (!m) return null;
+    try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
+  };
+  const num = (chunk: string, key: string) => {
+    const m = chunk.match(new RegExp(`[{,]\\s*"?${key}"?\\s*:\\s*"?([0-9]+(?:\\.[0-9]+)?)`));
+    return m ? parseFloat(m[1]) : NaN;
+  };
+  const text = html;   // a JS object literal: strings keep their \" escapes
+  const starts = [...text.matchAll(/[{,]\s*"?offer_code"?\s*:/g)].map((m) => m.index!);
+  for (let i = 0; i < starts.length; i++) {
+    const chunk = text.slice(starts[i], Math.min(starts[i + 1] ?? text.length, starts[i] + 8000));
+    const sku = str(chunk, "sku"), name = str(chunk, "name");
+    const price = num(chunk, "price"), sale = num(chunk, "sale_price");
+    if (!sku || !name || !(price > 0) || !(sale > 0) || sale >= price) continue;
+    if (/is_buyable"?\s*:\s*!1/.test(chunk)) continue;   // not purchasable
+    const slug = str(chunk, "url") ?? "product";
+    const img = str(chunk, "image_url") ?? ((k) => (k ? `https://f.nooncdn.com/p/${k}.jpg` : null))(str(chunk, "image_key"));
+    out.set(sku, { id: `noon:${sku}`, store: "noon", title: name, url: `https://www.noon.com/egypt-en/${slug}/${sku}/p/`,
+      image_url: img, current_price: sale, original_price: price });
   }
   return [...out.values()];
 }
