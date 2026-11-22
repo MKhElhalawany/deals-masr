@@ -151,6 +151,26 @@ class SheinRepository(
         }
     }
 
+    private fun now() = System.currentTimeMillis()
+
+    private fun applyQuote(item: CartItemEntity, q: QuoteDto): CartItemEntity {
+        val quoted = q.status == "quoted" && q.originalPriceSar != null
+        return item.copy(
+            quoteId = q.id,
+            quoteStatus = q.status,
+            saUrl = q.saUrl ?: item.saUrl,
+            title = q.title ?: item.title,
+            imageUrl = q.imageUrl ?: item.imageUrl,
+            productUrl = q.productUrl ?: q.saUrl ?: item.productUrl,
+            adminNote = q.adminNote,
+            candidatesJson = if (q.candidates.isEmpty()) null
+                else json.encodeToString(ListSerializer(CandidateDto.serializer()), q.candidates),
+            // A real quote always replaces a customer-entered estimate.
+            priceSar = if (quoted) q.originalPriceSar else item.priceSar,
+            priceSource = if (quoted) "quoted" else item.priceSource,
+        )
+    }
+
     /** Adds a product from a pasted link / shared text. */
     suspend fun addByUrl(input: String, manualPriceSar: Double?): AddResult {
         val url = SheinLink.firstUrl(input) ?: return AddResult.Error("الرابط غير صحيح")
