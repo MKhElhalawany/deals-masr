@@ -194,7 +194,8 @@ Deno.serve(async (req) => {
       const spec = STORES[String(body.store)];
       const [code, html] = await fetchPage(spec.deals[0] ?? spec.search("headphones"));
       const i = html.search(/s-search-result|article class="prd|\/p\//);
-      out = { code, length: html.length, sample: i >= 0 ? html.slice(i, i + 6000) : html.slice(0, 3000) };
+      const n = html.indexOf("s-search-result", i + 7000);
+      out = { code, length: html.length, sample: i >= 0 ? html.slice(i, i + 6000) + "\n=====\n" + (n > 0 ? html.slice(n, n + 6000) : "") : html.slice(0, 3000) };
     } else if (body.job === "search") out = await runSearch(Number(body.id));
     else if (body.job === "shein") out = await runShein(Number(body.id));
     else out = { error: "unknown job" };

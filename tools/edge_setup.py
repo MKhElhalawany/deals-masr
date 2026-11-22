@@ -131,6 +131,7 @@ create trigger call_scan after insert or update of status on public.orders for e
             if j.get("cards") and not j.get("accepted"):
                 diag.append(s)
             OUT.append(f"| {s} | {j.get('code')} | {j.get('cards')} | {j.get('accepted')} | {j.get('fetch_ms')} ms | {j.get('save_ms')} ms | {total:.0f} ms |")
+    diag = sorted(set(diag + [x for x in os.environ.get("EDGE_DIAG", "").split(",") if x]))
     for s in diag:   # page refused / read without deals → print what the store returned (product HTML only) for diagnosis
         try:
             d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json={"job": "debug", "store": s}).json()
