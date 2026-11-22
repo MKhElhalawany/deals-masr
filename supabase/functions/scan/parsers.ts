@@ -139,13 +139,41 @@ function noonJson(html: string): Item[] {
   return [...out.values()];
 }
 
-// ───────── Town Team (Shopify storefront): product cards with "compare at" (crossed-out) prices
-export function parseTownTeam(html: string): [Item[], number] {
+// ───────── Town Team (Shopify): the store's own product JSON (/collections/<handle>/products.json) gives exact
+// prices, "compare at" (original) prices, images and availability — no guessing from page layout.
+export function townTeamJsonUrl(pageUrl: string): string | null {
+  const u = new URL(pageUrl);
+  const m = u.pathname.match(/^\/collections\/([a-z0-9\-]+)\/?$/i);
+  if (!m) return null;
+  const j = new URL(`https://townteam.com/collections/${m[1]}/products.json`);
+  j.searchParams.set("limit", "250");
+  j.searchParams.set("page", u.searchParams.get("page") ?? "1");
+  return j.toString();
+}
+
+export function parseTownTeamJson(text: string): [Item[], number] {
+  const data = JSON.parse(text);
+  const products: any[] = data?.products ?? [];
+  const out: Item[] = [];
+  for (const p of products) {
+    const vs = (p.variants ?? []).filter((v: any) => v.available !== false);
+    let best: { cur: number; orig: number } | null = null;
+    for (const v of vs) {
+      const cur = parseFloat(v.price), orig = parseFloat(v.compare_at_price ?? "");
+      if (!(cur > 0) || !(orig > cur)) continue;
+      if (!best || cur < best.cur) best = { cur, orig };
+    }
+    if (!best || !p.handle || !p.title) continue;
+    const img = p.images?.[0]?.src ?? null;
+    out.push({ id: `townteam:${p.handle}`, store: "townteam", title: String(p.title), url: `https://townteam.com/products/${p.handle}`,
+      image_url: img ? (img.startsWith("//") ? "https:" + img : img) : null, current_price: best.cur, original_price: best.orig });
+  }
+  return [out, products.length];
+}
+
+export function parseTownTeam(html: string): [Item[], number] {   // HTML pages (homepage): links only, prices come from JSON
   const d = doc(html);
-  const cards = d.querySelectorAll("a[href*='/products/']").length;
-  const items = generic(html, "townteam", "https://townteam.com/", (url) => (url.match(/\/products\/([^/?#]+)/)?.[1] ?? defaultId(url)), d)
-    .map((i) => ({ ...i, url: i.url.split("?")[0] }));
-  return [items, Math.max(cards, items.length)];
+  return [[], d.querySelectorAll("a[href*='/products/']").length];
 }
 
 // ───────── generic deal-card detector (crossed-out price + lower current price inside a linked card)
@@ -184,7 +212,7 @@ export function generic(html: string, store: string, base: string, idOf = defaul
       const own = [...e.childNodes].filter((n: any) => n.nodeType === 3).map((n: any) => n.textContent).join("");
       if (PRICE_CLS.test(e.getAttribute("class") ?? "") || PRICE_CLS.test(e.getAttribute("data-qa") ?? "") || CURRENCY.test(own)) {
         const p = priceOf(e);
-        if (p && old * 0.04 < p && p < old) prices.push(p);
+        if (p && old * 0.1 < p && p < old) prices.push(p);   // > 90% off from a card = almost always a misread number
       }
     }
     if (!prices.length) continue;

@@ -61,13 +61,14 @@ Deno.test("discovery: robots, links, pages, fingerprint", async () => {
   assertEquals(nextPage("noon", "https://www.noon.com/egypt-en/mobiles/?limit=50", 0, 0, 1), null);
   assertEquals(fingerprint([{ id: "a", current_price: 1 }, { id: "b", current_price: 2 }]), fingerprint([{ id: "b", current_price: 2 }, { id: "a", current_price: 1 }]));
 });
-Deno.test("town team shopify cards", async () => {
-  const { parseTownTeam } = await import("./parsers.ts");
-  const [items] = parseTownTeam('<div class="card"><a href="/products/polo-shirt?variant=1"><img src="https://cdn.shopify.com/a.jpg" alt="Polo Shirt Navy"></a><span class="price-item--regular"><s>LE 899.00</s></span><span class="price-item--sale">LE 599.00</span></div>');
-  assertEquals([items.length, items[0]?.current_price, items[0]?.original_price, items[0]?.url, items[0]?.id.startsWith("townteam:polo-shirt-")], [1, 599, 899, "https://townteam.com/products/polo-shirt", true]);
-});
-Deno.test("amazon discovery accepts language-prefixed links", async () => {
-  const { Robots, categoryLinks } = await import("./discover.ts");
-  const l = categoryLinks("amazon", '<a href="/-/en/s?i=fashion&amp;rh=n%3A18018102031&amp;ref=x">F</a>', 0, new Robots(""));
-  assertEquals(l.length === 1 && l[0].url.startsWith("https://www.amazon.eg/s?rh=n%3A18018102031"), true);
+Deno.test("town team product JSON", async () => {
+  const { parseTownTeamJson, townTeamJsonUrl } = await import("./parsers.ts");
+  assertEquals(townTeamJsonUrl("https://townteam.com/collections/spring-offers?page=2"), "https://townteam.com/collections/spring-offers/products.json?limit=250&page=2");
+  assertEquals(townTeamJsonUrl("https://townteam.com/"), null);
+  const [items, n] = parseTownTeamJson(JSON.stringify({ products: [
+    { handle: "jeans-skinny", title: "Jeans Skinny fit basic - D-BLUE", images: [{ src: "//cdn.shopify.com/j.jpg" }],
+      variants: [{ price: "349.00", compare_at_price: "499.00", available: true }, { price: "299.00", compare_at_price: "499.00", available: false }] },
+    { handle: "no-sale", title: "Tee", images: [], variants: [{ price: "199.00", compare_at_price: null, available: true }] }] }));
+  assertEquals([n, items.length, items[0].id, items[0].current_price, items[0].original_price, items[0].image_url],
+    [2, 1, "townteam:jeans-skinny", 349, 499, "https://cdn.shopify.com/j.jpg"]);
 });

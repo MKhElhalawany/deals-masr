@@ -1,7 +1,7 @@
 // 24/7 deal scanner on Supabase Edge Functions (free plan, no VM, no phone involved).
 // Called only by the database: pg_cron every 30 s per store, plus triggers for searches / SHEIN quotes / orders.
 // If the optional VM worker (server/worker) is alive, this function steps aside to avoid double work.
-import { amazonCandidates, Blocked, generic, parseAmazonProduct, STORES } from "./parsers.ts";
+import { amazonCandidates, Blocked, generic, parseAmazonProduct, parseTownTeamJson, STORES, townTeamJsonUrl } from "./parsers.ts";
 const checkedAsins = new Map<string, number>();   // product pages already checked (per isolate), avoid re-fetching
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
@@ -195,9 +195,11 @@ async function scanQueue(store: string, n: number) {
       return { t, error: "robots" };
     }
     try {
-      const [code, html] = await fetchPage(t.url);
+      // Town Team collections: read the store's product JSON (exact prices); other pages: HTML
+      const jsonUrl = store === "townteam" ? townTeamJsonUrl(t.url) : null;
+      const [code, html] = await fetchPage(jsonUrl && robots.ok(jsonUrl) ? jsonUrl : t.url);
       if ([403, 429, 503].includes(code)) throw new Blocked(`HTTP ${code}`);
-      const [parsed, cards] = spec.parse(html);
+      const [parsed, cards] = jsonUrl && html.trimStart().startsWith("{") ? parseTownTeamJson(html) : spec.parse(html);
       const items: any[] = [...parsed];
       if (store === "amazon") await verifyAmazonCandidate(items);
       const fp = fingerprint(parsed);
@@ -356,6 +358,10 @@ Deno.serve(async (req) => {
       const spec = STORES[String(body.store)];
       const [code, html] = await fetchPage(spec.deals[0] ?? spec.search?.("headphones") ?? "");
       const marks = [...html.matchAll(/data-component-type="s-search-result"|<article class="prd|href="[^"]*\/p\//g)].map((m) => m.index!);
+      if (String(body.store) === "noon" && marks.length) {   // image diagnosis: markup around the first product link
+        out = { code, length: html.length, sample: html.slice(Math.max(0, marks[0] - 1500), marks[0] + 2500) };
+        return Response.json(out);
+      }
       const card = marks.length > 2 ? html.slice(marks[1], marks[2]) : html.slice(0, 60000);
       const bits = [...card.matchAll(/price|offscreen|strike|EGP|جنيه|%/gi)].slice(0, 25).map((m) => card.slice(Math.max(0, m.index! - 150), m.index! + 250).replace(/\s+/g, " "));
       out = { code, length: html.length, cardLength: card.length, sample: bits.join("\n---\n") || card.slice(-3000) };

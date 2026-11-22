@@ -150,6 +150,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          EDGE_DIAG: noon
         run: |
           pip install -q httpx
           python3 tools/edge_setup.py

@@ -121,6 +121,14 @@ create trigger call_scan after insert or update of status on public.orders for e
     S.sql(ref, "insert into public.scan_targets (store, url, kind, label, depth, interval_sec, min_interval) values "
                f"{values} on conflict (store, url) do nothing")
     S.sql(ref, "insert into public.app_config (key, value) values ('scanner_mode', '\"queue\"') on conflict (key) do nothing")
+    # one-time data fix: Town Team prices were read from page layout (misreads such as 30 instead of 349) → hide them;
+    # the JSON reader re-adds every real Town Team deal within minutes. Also hide >90% deals (almost always misreads).
+    if not S.sql(ref, "select 1 from app_config where key = 'cleanup_v1'"):
+        fixed = S.sql(ref, "with x as (update public.deals set active = false, updated_at = now() where active and "
+                           "(store_id = 'townteam' or discount_pct > 90) returning 1) select count(*) as n from x")
+        S.sql(ref, "update public.scan_targets set next_run_at = now(), fingerprint = null where store = 'townteam'")
+        S.sql(ref, "insert into app_config (key, value) values ('cleanup_v1', 'true')")
+        print(f"cleanup: hid {fixed[0]['n']} misread deals (Town Team layout prices, >90%)")
     qstat = S.sql(ref, "select store, count(*) as n from public.scan_targets group by store order by store") or []
     print("scan targets:", ", ".join(f"{r['store']} {r['n']}" for r in qstat))
 
@@ -195,10 +203,11 @@ create trigger call_scan after insert or update of status on public.orders for e
         OUT.append("| المتجر | صفحات في الطابور | اتمسحت | اتكتشفت تلقائياً | عروض في آخر 10 دقايق |\n|---|---|---|---|---|")
         for r in cov:
             OUT.append(f"| {r['store']} | {r['targets']} | {r['scanned']} | {r['discovered']} | {r['deals_10m']} |")
-        dz = S.sql(ref, "select store_id, count(*) as n, count(*) filter (where updated_at > now() - interval '1 hour') as h1 from public.deals where active group by store_id order by store_id") or []
-        OUT.append("\n| المتجر | عروض نشطة | اتحدثت آخر ساعة |\n|---|---|---|")
+        dz = S.sql(ref, "select store_id, count(*) as n, count(*) filter (where updated_at > now() - interval '1 hour') as h1, "
+                        "count(*) filter (where image_url is not null) as img, max(discount_pct) as maxpct from public.deals where active group by store_id order by store_id") or []
+        OUT.append("\n| المتجر | عروض نشطة | اتحدثت آخر ساعة | بصور | أعلى خصم |\n|---|---|---|---|---|")
         for r in dz:
-            OUT.append(f"| {r['store_id']} | {r['n']} | {r['h1']} |")
+            OUT.append(f"| {r['store_id']} | {r['n']} | {r['h1']} | {r['img']} | {r['maxpct']}% |")
         OUT.append("\n### نون — التشغيلات المجدولة اللي اتسجلت في الـ 3 دقايق")
         for when, msg in sorted(noon_runs.items()):
             OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
