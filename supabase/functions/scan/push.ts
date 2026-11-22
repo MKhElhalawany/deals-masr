@@ -53,7 +53,7 @@ export async function send(message: Record<string, unknown>): Promise<string> {
 const android = (collapse?: string) => ({ priority: "high", ttl: "3600s", ...(collapse ? { collapse_key: collapse.slice(0, 60) } : {}) });
 const egp = (n: number) => Math.round(n).toLocaleString("en-US");
 
-export type DealEvent = { kind: string; id: string; store: string; title: string; current_price: number; original_price: number; pct: number };
+export type DealEvent = { kind: string; id: string; store: string; title: string; current_price: number; original_price: number | null; pct: number };
 
 export async function dealPushes(events: DealEvent[], storeNames: Record<string, string>): Promise<number> {
   if (!pushEnabled() || !events.length) return 0;
@@ -67,7 +67,7 @@ export async function dealPushes(events: DealEvent[], storeNames: Record<string,
       : level === "super" ? `⚡ ${again}سوبر عرض -${Math.floor(pct)}% — قبل ما يخلص` : `🔥 ${again}عرض ساخن -${Math.floor(pct)}% على ${store}`;
     const condition = THRESHOLDS.filter((t) => t <= pct).map((t) => `'deals_min_${t}' in topics`).join(" || ");
     if (await send({ condition, android: android(e.id), data: { type: "deal", level, title,
-      body: `${e.title.slice(0, 110)}\n${egp(e.current_price)} ج.م بدل ${egp(e.original_price)}`, deal_id: e.id,
+      body: `${e.title.slice(0, 110)}\n${egp(e.current_price)} ج.م` + (e.original_price ? ` بدل ${egp(e.original_price)}` : ` · خصم ${Math.floor(pct)}% أو أكتر`), deal_id: e.id,
       pct: String(pct), price: String(Math.round(Number(e.current_price))), sent_at: String(Date.now()) } }) === "ok") sent++;
   }
   if (low.length) {

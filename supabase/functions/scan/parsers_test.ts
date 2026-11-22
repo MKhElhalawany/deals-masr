@@ -76,3 +76,10 @@ Deno.test("town team product JSON", async () => {
   assertEquals([n, items.length, items[0].id, items[0].current_price, items[0].original_price, items[0].image_url],
     [2, 1, "townteam:jeans-skinny", 349, 499, "https://cdn.shopify.com/j.jpg"]);
 });
+Deno.test("noon: coupon price + products without discount", async () => {
+  const m = await import("./parsers.ts");
+  const html = '$R[1]={offer_code:"a",sku:"ZA",name:"Dress",price:2699,sale_price:996,url:"dress",image_url:"https://f.nooncdn.com/p/a.jpg",is_buyable:!0,text="Best Price \\x3Chighlight>EGP 697.2\\x3C/highlight> with offers"},$R[2]={offer_code:"b",sku:"ZB",name:"Plain",price:500,sale_price:null,url:"plain"}';
+  const [items] = m.parseNoon(html);
+  assertEquals([items.length, items[0].current_price, items[0].best_price], [1, 996, 697.2]);
+  assertEquals(m.lastNoDeal, ["noon:ZB"]);
+});

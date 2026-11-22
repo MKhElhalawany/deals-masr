@@ -4,8 +4,12 @@ import { parseHTML } from "npm:linkedom@0.18.5";
 
 export type Item = {
   id: string; store: string; title: string; url: string; image_url: string | null;
-  current_price: number; original_price: number; rating?: number | null; rating_count?: number | null;
+  current_price: number; original_price: number | null; rating?: number | null; rating_count?: number | null;
+  min_pct?: number;      // Amazon: listing guarantees "X% off or more" but shows no old price
+  best_price?: number;   // lower price with coupons / offers (shown as a note)
 };
+/** ids of products seen on a page WITHOUT a discount (their old deals are removed at once) */
+export let lastNoDeal: string[] = [];
 export class Blocked extends Error {}
 
 const AR = "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹٬٫";
@@ -48,7 +52,7 @@ export function parseAmazon(html: string): [Item[], number] {
     const title = ((h2?.getAttribute("aria-label")) || txt(h2)).trim();
     const cur = price(txt([...c.querySelectorAll(".a-price .a-offscreen")].find((e: any) => !e.parentElement?.classList.contains("a-text-price"))));
     const old = price(txt(c.querySelector(".a-price.a-text-price .a-offscreen"))) ?? price(txt(c.querySelector('[data-a-strike="true"] .a-offscreen')));
-    if (asin && title && cur && !old && c.querySelector("[data-a-badge-type=deal], .a-badge")) {
+    if (asin && title && cur && !old) {
       amazonCandidates.push({ asin, title, image_url: c.querySelector("img.s-image")?.getAttribute("src") ?? null, current: cur });
     }
     if (!asin || !title || !cur || !old) continue;
@@ -121,9 +125,17 @@ export function parseNoon(html: string): [Item[], number] {
   return [items, Math.max(cards, items.length)];
 }
 
+/** "Best Price EGP 2,999 with offers" (coupon/bank offers) when it is lower than the normal deal price */
+function bestPrice(chunk: string, sale: number): number | undefined {
+  const m = chunk.match(/Best Price[^"]{0,60}?EGP\s*([0-9][0-9,]*(?:\.[0-9]+)?)/);
+  const v = m ? parseFloat(m[1].replace(/,/g, "")) : NaN;
+  return v > 0 && v < sale && v > sale * 0.3 ? v : undefined;
+}
+
 /** noon's server-rendered product list ("hits": objects with sku, name, price, sale_price, url, image_url). */
 export function noonJson(html: string): Item[] {
   const out = new Map<string, Item>();
+  const noDeal: string[] = [];
   const str = (chunk: string, key: string) => {
     const m = chunk.match(new RegExp(`[{,]\\s*"?${key}"?\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
     if (!m) return null;
@@ -139,13 +151,15 @@ export function noonJson(html: string): Item[] {
     const chunk = text.slice(starts[i], Math.min(starts[i + 1] ?? text.length, starts[i] + 8000));
     const sku = str(chunk, "sku"), name = str(chunk, "name");
     const price = num(chunk, "price"), sale = num(chunk, "sale_price");
+    if (sku && price > 0 && !(sale > 0 && sale < price)) { noDeal.push(`noon:${sku}`); continue; }
     if (!sku || !name || !(price > 0) || !(sale > 0) || sale >= price) continue;
     if (/is_buyable"?\s*:\s*!1/.test(chunk)) continue;   // not purchasable
     const slug = str(chunk, "url") ?? "product";
     const img = str(chunk, "image_url") ?? ((k) => (k ? `https://f.nooncdn.com/p/${k}.jpg` : null))(str(chunk, "image_key"));
     out.set(sku, { id: `noon:${sku}`, store: "noon", title: name, url: `https://www.noon.com/egypt-en/${slug}/${sku}/p/`,
-      image_url: img, current_price: sale, original_price: price });
+      image_url: img, current_price: sale, original_price: price, best_price: bestPrice(chunk, sale) });
   }
+  lastNoDeal = noDeal;
   return [...out.values()];
 }
 
@@ -165,6 +179,7 @@ export function parseTownTeamJson(text: string): [Item[], number] {
   const data = JSON.parse(text);
   const products: any[] = data?.products ?? [];
   const out: Item[] = [];
+  const noDeal: string[] = [];
   for (const p of products) {
     const vs = (p.variants ?? []).filter((v: any) => v.available !== false);
     let best: { cur: number; orig: number } | null = null;
@@ -173,11 +188,13 @@ export function parseTownTeamJson(text: string): [Item[], number] {
       if (!(cur > 0) || !(orig > cur)) continue;
       if (!best || cur < best.cur) best = { cur, orig };
     }
-    if (!best || !p.handle || !p.title) continue;
+    if (!best) { if (p.handle) noDeal.push(`townteam:${p.handle}`); continue; }
+    if (!p.handle || !p.title) continue;
     const img = p.images?.[0]?.src ?? null;
     out.push({ id: `townteam:${p.handle}`, store: "townteam", title: String(p.title), url: `https://townteam.com/products/${p.handle}`,
       image_url: img ? (img.startsWith("//") ? "https:" + img : img) : null, current_price: best.cur, original_price: best.orig });
   }
+  lastNoDeal = noDeal;
   return [out, products.length];
 }
 

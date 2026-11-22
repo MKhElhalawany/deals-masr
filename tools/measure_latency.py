@@ -168,6 +168,33 @@ def sync_sizes():
     out.append(f"لقطة كاملة (400 عرض): {len(full.content) / 1024:.0f} KB · تغييرات آخر 15 دقيقة: {len(inc.json())} عرض = {len(inc.content) / 1024:.1f} KB")
 
 
+def api_checks():
+    """End-to-end checks of the app API as a real signed-in user: Arabic search, assistant, verify."""
+    out.append("\n### 🤖 فحص البحث والمساعد وزرار يستاهل")
+    http = httpx.Client(timeout=60)
+    email = f"ci-api-{int(time.time())}-{secrets.token_hex(3)}@example.com"
+    r = http.post(f"{URL}/auth/v1/signup", headers={"apikey": PUB}, json={"email": email, "password": secrets.token_urlsafe(16)})
+    body = r.json()
+    jwt = body.get("access_token") or (body.get("session") or {}).get("access_token")
+    uid = (body.get("user") or body).get("id")
+    h = {"apikey": PUB, "Authorization": f"Bearer {jwt}", "Content-Type": "application/json"}
+    try:
+        for q in ("قلاية", "سماعة بلوتوث", "air fryer"):
+            t = time.perf_counter(); j = http.post(f"{URL}/functions/v1/api", headers=h, json={"action": "search", "q": q}).json()
+            out.append(f"- بحث «{q}» → {len(j.get('items', []))} نتيجة · ترجمة: {j.get('english')} · بحث مباشر: {j.get('live')} · {(time.perf_counter()-t)*1000:.0f} ms" + (f" · خطأ: {j.get('error')} {j.get('detail','')}" if j.get('error') else ""))
+        t = time.perf_counter(); j = http.post(f"{URL}/functions/v1/api", headers=h, json={"action": "chat", "messages": [{"role": "user", "text": "عايز سماعة بلوتوث كويسة تحت 1000 جنيه"}]}).json()
+        out.append(f"- المساعد: ذكاء اصطناعي={j.get('ai')} ({j.get('model')}) · {len(j.get('products', []))} منتج · {(time.perf_counter()-t)*1000:.0f} ms" + (f" · خطأ: {j.get('error')} {j.get('detail','')}" if j.get('error') else ""))
+        out.append(f"  > {str(j.get('reply',''))[:300]}")
+        d = httpx.get(f"{URL}/rest/v1/deals?select=id&active=eq.true&order=deal_pct.desc.nullslast&limit=1", headers=svc_headers()).json()
+        if d:
+            t = time.perf_counter(); j = http.post(f"{URL}/functions/v1/api", headers=h, json={"action": "verify", "deal_id": d[0]["id"]}).json()
+            out.append(f"- يستاهل؟: {j.get('verdict')} · score={j.get('score')} · ذكاء اصطناعي={j.get('ai')} · {(time.perf_counter()-t)*1000:.0f} ms" + (f" · خطأ: {j.get('error')} {j.get('detail','')}" if j.get('error') else ""))
+            out.append(f"  > {str(j.get('explanation',''))[:300]}")
+    finally:
+        if uid:
+            http.delete(f"{URL}/auth/v1/admin/users/{uid}", headers=svc_headers())
+
+
 def worker_status():
     out.append("\n### 🛰️ السيرفر (اكتشاف العروض)")
     rows = httpx.get(f"{URL}/rest/v1/scraper_status?select=store,ok,message,last_run", headers=svc_headers(), timeout=20).json()
@@ -189,7 +216,7 @@ async def main():
     except Exception as e:
         ok = False
         out.append(f"### ⚡ Realtime\n❌ فشل القياس: {type(e).__name__}: {e}")
-    for fn in (fcm, sync_sizes, worker_status):
+    for fn in (fcm, sync_sizes, api_checks, worker_status):
         try:
             fn()
         except Exception as e:

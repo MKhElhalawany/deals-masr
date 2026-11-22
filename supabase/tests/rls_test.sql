@@ -175,6 +175,27 @@ select pg_temp.check(public.compact_price_history(90) = 2, 'compaction removes 2
 reset role;
 select pg_temp.check((select current_price from public.price_history where deal_id = 'amazon:rls-ing-1' and checked_at::date = '2020-01-05') = 640, 'compaction keeps the day''s lowest price');
 select pg_temp.check((select count(*) from public.price_history where deal_id = 'amazon:rls-ing-1' and checked_at > now() - interval '1 day') = 3, 'recent history untouched by compaction');
+-- deals v2: Amazon "X% off or more" without an old price, coupon price, immediate removal when the discount ends
+set role service_role;
+select pg_temp.check((public.ingest_deals('[{"id":"amazon:rls-ing-5","store":"amazon","title":"No strike","url":"https://x/5","current_price":745,"min_pct":30},
+  {"id":"noon:rls-ing-6","store":"noon","title":"No strike noon","url":"https://x/6","current_price":100,"min_pct":30},
+  {"id":"noon:rls-ing-7","store":"noon","title":"Coupon","url":"https://x/7","current_price":996,"original_price":2699,"best_price":697.2}]'::jsonb, 10)->>'accepted')::int = 2,
+  'Amazon min-% deal and coupon deal accepted; non-Amazon without old price rejected');
+reset role;
+select pg_temp.check((select original_price is null and deal_pct = 30 from public.deals where id = 'amazon:rls-ing-5'), 'no-old-price deal stored with guaranteed % only');
+select pg_temp.check((select best_price = 697.2 and current_price = 996 and deal_pct = 63.1 from public.deals where id = 'noon:rls-ing-7'), 'coupon price kept as a note, deal price stays 996');
+update public.deals set original_price = 1200, min_discount_pct = null where id = 'amazon:rls-ing-5';
+set role service_role;
+select public.ingest_deals('[{"id":"amazon:rls-ing-5","store":"amazon","title":"No strike","url":"https://x/5","current_price":745,"min_pct":30}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select original_price = 1200 from public.deals where id = 'amazon:rls-ing-5'), 'a verified old price is not erased by a listing without one');
+set role authenticated;
+select pg_temp.must_fail($$select public.deactivate_seen_without_deal(array['noon:rls-ing-7'])$$);
+reset role;
+set role service_role;
+select pg_temp.check(public.deactivate_seen_without_deal(array['noon:rls-ing-7']) = 1, 'deal seen without discount is removed');
+reset role;
+delete from public.deals where id like 'noon:rls-ing-%';
 delete from public.deals where id like 'amazon:rls-ing-%';
 delete from public.alerts where query = 'rlsprobe phone';
 

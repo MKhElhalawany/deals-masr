@@ -57,6 +57,11 @@ def main():
 
     # 2) function secrets (Management API)
     fsecrets = [{"name": "CRON_SECRET", "value": cron_secret}, {"name": "SERVICE_KEY", "value": key}]
+    gk = os.environ.get("GEMINI_API_KEY", "").strip()
+    if gk:
+        print(f"::add-mask::{gk}", flush=True)
+        fsecrets.append({"name": "GEMINI_API_KEY", "value": gk})
+    print(f"Gemini key: {'present ✓' if gk else 'MISSING (add the GEMINI_API_KEY secret on GitHub)'}")
     fsa = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
     if fsa:
         import base64

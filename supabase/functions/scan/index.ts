@@ -1,7 +1,7 @@
 // 24/7 deal scanner on Supabase Edge Functions (free plan, no VM, no phone involved).
 // Called only by the database: pg_cron every 30 s per store, plus triggers for searches / SHEIN quotes / orders.
 // If the optional VM worker (server/worker) is alive, this function steps aside to avoid double work.
-import { amazonCandidates, Blocked, generic, parseAmazonProduct, parseTownTeamJson, STORES, townTeamJsonUrl } from "./parsers.ts";
+import { amazonCandidates, Blocked, generic, lastNoDeal, parseAmazonProduct, parseTownTeamJson, STORES, townTeamJsonUrl } from "./parsers.ts";
 const checkedAsins = new Map<string, number>();   // product pages already checked (per isolate), avoid re-fetching
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
@@ -92,8 +92,12 @@ async function verifyAmazonCandidate(items: unknown[]) {
   try {
     const [pc, ph] = await fetchPage(`https://www.amazon.eg/dp/${pick.asin}?language=en_AE`);
     const v = pc === 200 ? parseAmazonProduct(ph) : null;
-    if (v) items.push({ id: `amazon:${pick.asin}`, store: "amazon", title: pick.title, url: `https://www.amazon.eg/dp/${pick.asin}`,
-      image_url: pick.image_url, current_price: v.current, original_price: v.list });
+    if (v) {
+      const id = `amazon:${pick.asin}`;
+      for (let i = items.length - 1; i >= 0; i--) if ((items[i] as any).id === id) items.splice(i, 1);
+      items.push({ id, store: "amazon", title: pick.title, url: `https://www.amazon.eg/dp/${pick.asin}`,
+        image_url: pick.image_url, current_price: v.current, original_price: v.list });
+    }
   } catch (_) { /* skip */ }
 }
 
@@ -200,10 +204,19 @@ async function scanQueue(store: string, n: number) {
       const [code, html] = await fetchPage(jsonUrl && robots.ok(jsonUrl) ? jsonUrl : t.url);
       if ([403, 429, 503].includes(code)) throw new Blocked(`HTTP ${code}`);
       const [parsed, cards] = jsonUrl && html.trimStart().startsWith("{") ? parseTownTeamJson(html) : spec.parse(html);
+      const noDeal = store === "amazon" ? [] : [...lastNoDeal];   // read right after parsing (no await in between)
       const items: any[] = [...parsed];
-      if (store === "amazon") await verifyAmazonCandidate(items);
+      if (store === "amazon") {
+        // listing filtered by "X% off or more": cards without an old price are still deals of at least X%
+        const minPct = Number(new URL(t.url).searchParams.get("pct-off")?.match(/^(\d+)-/)?.[1] ?? NaN);
+        const cands = [...amazonCandidates];
+        if (minPct >= 10) for (const c of cands) items.push({ id: `amazon:${c.asin}`, store: "amazon", title: c.title,
+          url: `https://www.amazon.eg/dp/${c.asin}`, image_url: c.image_url, current_price: c.current, original_price: null, min_pct: minPct });
+        await verifyAmazonCandidate(items);
+      }
       const fp = fingerprint(parsed);
       const res = items.length ? await ingest(items) : { accepted: 0, events: [], notifications: [] };
+      if (noDeal.length) await rest("POST", "rpc/deactivate_seen_without_deal", { p_ids: noDeal.slice(0, 500) });
       const pushed = await dealPushes(res.events, STORE_NAMES);
       await personalPushes(res.notifications);
       // discovery: category links (only when the page changed) + next page
@@ -244,7 +257,10 @@ async function runSearch(id: number) {
     try {
       const [code, html] = await fetchPage(STORES[s].search!(r.query));
       if (code !== 200) return;
-      const res = await ingest(STORES[s].parse(html)[0]);
+      const items: any[] = [...STORES[s].parse(html)[0]];
+      if (s === "amazon") for (const c of amazonCandidates) items.push({ id: `amazon:${c.asin}`, store: "amazon", title: c.title,
+        url: `https://www.amazon.eg/dp/${c.asin}`, image_url: c.image_url, current_price: c.current, original_price: null, min_pct: 10 });
+      const res = await ingest(items);
       total += res.accepted;
       await dealPushes(res.events, STORE_NAMES);
       await personalPushes(res.notifications);
@@ -296,7 +312,7 @@ async function runOrder(id: string) {
 // ───────── one-time store probe (Phase 0): ONE plain request per call, allowlisted hosts only, no retries,
 // no cookies, no challenge solving. Returns what the page offers, not the page.
 const PROBE_HOSTS = ["www.amazon.eg", "www.noon.com", "www.jumia.com.eg", "www.defacto.com", "defacto.com", "www.lcwaikiki.eg",
-  "lcwaikiki.eg", "townteam.com", "www.townteam.com", "www.townteam.com.eg", "townteam.com.eg"];
+  "lcwaikiki.eg", "townteam.com", "www.townteam.com", "www.townteam.com.eg", "townteam.com.eg", "www.raneen.com", "raneen.com", "btech.com", "www.btech.com"];
 async function probe(url: string) {
   const u = new URL(url);
   if (!PROBE_HOSTS.includes(u.hostname)) return { error: "host not allowed" };
@@ -322,7 +338,7 @@ async function probe(url: string) {
   try {
     const store = u.hostname.includes("noon") ? "noon" : u.hostname.includes("amazon") ? "amazon" : null;
     const items = store ? STORES[store].parse(html)[0] : generic(html, "probe", `${u.protocol}//${u.hostname}/`);
-    const deals = items.filter((i) => i.original_price > i.current_price && (i.original_price - i.current_price) / i.original_price >= 0.1);
+    const deals = items.filter((i) => (i.original_price ?? 0) > i.current_price && ((i.original_price ?? 0) - i.current_price) / (i.original_price ?? 1) >= 0.1);
     parsed = { items: items.length, deals10: deals.length, sample: deals.slice(0, 3).map((i) => `${i.title.slice(0, 50)} — ${i.current_price}/${i.original_price}`) };
   } catch (e) { parsed = { error: String(e).slice(0, 120) }; }
   const dropdown = [...html.matchAll(/<option[^>]*value="search-alias=([a-z0-9-]+)"/gi)].map((m) => m[1]);

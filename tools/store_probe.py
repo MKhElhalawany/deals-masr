@@ -97,40 +97,17 @@ def main():
         r = probe(store, f"{origin}/robots.txt", None, "robots.txt")
         return r, Robots(r.get("robots") if r and r.get("status") == 200 else None)
 
-    # ── Follow-up probe (run once): pages the first run skipped by mistake + full robots.txt where it was cut at 4 KB.
-    # Budget ≤12 requests, ≤5 per store, ≥4 s apart, no retries. robots.txt already complete → read from tools/probe_cache.
-    def cached(store):
-        p = os.path.join(os.path.dirname(__file__), "probe_cache", f"{store}_robots.txt")
-        return Robots(open(p).read()) if os.path.exists(p) else None
-
-    # Amazon (1): full robots.txt only
-    robots_of("amazon", "https://www.amazon.eg")
-
-    # Noon (5): full robots, homepage category links, one category page, its page 2, discount sort
-    _, rb = robots_of("noon", "https://www.noon.com")
-    probe("noon", "https://www.noon.com/egypt-en/", rb, "homepage category links")
-    cat = "https://www.noon.com/egypt-en/electronics-and-mobiles/"
-    probe("noon", cat + "?limit=50", rb, "category page 1")
-    probe("noon", cat + "?limit=50&page=2", rb, "category page 2")
-    probe("noon", cat + "?sort[by]=discount_percent&sort[dir]=desc&limit=50", rb, "category sorted by discount")
-
-    # DeFacto (≤2): homepage + one sale/category link from it (robots cached, complete)
-    rb = cached("defacto")
-    h = probe("defacto", "https://www.defacto.com/en-eg", rb, "homepage")
-    sale = next((l for l in (h or {}).get("linkSample", []) if "/en-eg/" in l and any(w in l.lower() for w in ("sale", "outlet", "indirim", "discount", "offer", "firsat"))), None)
-    if sale:
-        probe("defacto", "https://www.defacto.com" + sale, rb, "sale page from homepage")
-
-    # LC Waikiki (2): full robots + homepage
-    _, rb = robots_of("lcwaikiki", "https://www.lcwaikiki.eg")
-    probe("lcwaikiki", "https://www.lcwaikiki.eg/en", rb, "homepage")
-
-    # Town Team (≤2): homepage + a sale collection page if linked (robots cached, complete)
-    rb = cached("townteam")
-    h = probe("townteam", "https://townteam.com/", rb, "homepage")
-    sale = next((l for l in (h or {}).get("linkSample", []) if l.startswith("/collections/") and any(w in l.lower() for w in ("sale", "offer", "discount", "clearance"))), None)
-    if sale:
-        probe("townteam", "https://townteam.com" + sale, rb, "sale collection from homepage")
+    # ── Probe 3 (run once): new stores Raneen and B.TECH — robots.txt, homepage, one category page each (≤3 per store)
+    for store, origin in (("raneen", "https://www.raneen.com"), ("btech", "https://btech.com")):
+        _, rb = robots_of(store, origin)
+        for home in (f"{origin}/en/", f"{origin}/"):
+            h = probe(store, home, rb, "homepage")
+            if h and h.get("status") == 200:
+                break
+        links = (h or {}).get("linkSample", []) if h else []
+        cat = next((l for l in links if l.count("/") >= 2 and not any(w in l for w in ("customer", "checkout", "cart", "account", "login", "wishlist", "search", ".html#"))), None)
+        if cat:
+            probe(store, origin + cat, rb, "category page from homepage")
 
     # report
     REPORT.append("### 🔎 فحص المتاجر لمرة واحدة (من سيرفر Supabase، ≤5 طلبات لكل متجر، 4 ث بين الطلبات)")
