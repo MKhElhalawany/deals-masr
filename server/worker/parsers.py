@@ -126,12 +126,12 @@ def noon_search_url(q: str, page: int = 1) -> str:
 
 # noon robots.txt disallows search pages → category pages only (temporary set, same as the edge scanner)
 NOON_DEAL_PAGES: list[str] = [
-    "https://www.noon.com/egypt-en/mobiles/?limit=50",
-    "https://www.noon.com/egypt-en/eg-home-appliances/?limit=50",
+    "https://www.noon.com/egypt-en/electronics-and-mobiles/?limit=50",
     "https://www.noon.com/egypt-en/fashion/eg-fashion-men-cat/?limit=50",
     "https://www.noon.com/egypt-en/fashion/eg-fashion-women-cat/?limit=50",
-    "https://www.noon.com/egypt-en/home-kitchen/?limit=50",
+    "https://www.noon.com/egypt-en/eg-fashion-footwear/?limit=50",
     "https://www.noon.com/egypt-en/beauty/?limit=50",
+    "https://www.noon.com/egypt-en/sports-eg/?limit=50",
 ]
 
 
