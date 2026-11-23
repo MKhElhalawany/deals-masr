@@ -141,6 +141,12 @@ create trigger call_scan after insert or update of status on public.orders for e
         S.sql(ref, "update public.scan_targets set fingerprint = null where store = 'noon'")
         S.sql(ref, "insert into app_config (key, value) values ('cleanup_v2', 'true')")
         print(f"cleanup v2: hid {fixed[0]['n']} noon deals with layout-read prices")
+    # one-time data fix 3 (owner's decision): every deal must show the price before AND after the discount
+    if not S.sql(ref, "select 1 from app_config where key = 'cleanup_v3'"):
+        fixed = S.sql(ref, "with x as (update public.deals set active = false, updated_at = now() where active and "
+                           "(original_price is null or deal_pct < 10) returning 1) select count(*) as n from x")
+        S.sql(ref, "insert into app_config (key, value) values ('cleanup_v3', 'true')")
+        print(f"cleanup v3: hid {fixed[0]['n']} deals without a before-price")
     qstat = S.sql(ref, "select store, count(*) as n from public.scan_targets group by store order by store") or []
     print("scan targets:", ", ".join(f"{r['store']} {r['n']}" for r in qstat))
 

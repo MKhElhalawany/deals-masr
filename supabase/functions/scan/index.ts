@@ -207,11 +207,7 @@ async function scanQueue(store: string, n: number) {
       const noDeal = store === "amazon" ? [] : [...lastNoDeal];   // read right after parsing (no await in between)
       const items: any[] = [...parsed];
       if (store === "amazon") {
-        // listing filtered by "X% off or more": cards without an old price are still deals of at least X%
-        const minPct = Number(new URL(t.url).searchParams.get("pct-off")?.match(/^(\d+)-/)?.[1] ?? NaN);
-        const cands = [...amazonCandidates];
-        if (minPct >= 10) for (const c of cands) items.push({ id: `amazon:${c.asin}`, store: "amazon", title: c.title,
-          url: `https://www.amazon.eg/dp/${c.asin}`, image_url: c.image_url, current_price: c.current, original_price: null, min_pct: minPct });
+        // only deals with a real old price: cards without one are checked on the product page (one per run)
         await verifyAmazonCandidate(items);
       }
       const fp = fingerprint(parsed);
@@ -258,8 +254,6 @@ async function runSearch(id: number) {
       const [code, html] = await fetchPage(STORES[s].search!(r.query));
       if (code !== 200) return;
       const items: any[] = [...STORES[s].parse(html)[0]];
-      if (s === "amazon") for (const c of amazonCandidates) items.push({ id: `amazon:${c.asin}`, store: "amazon", title: c.title,
-        url: `https://www.amazon.eg/dp/${c.asin}`, image_url: c.image_url, current_price: c.current, original_price: null, min_pct: 10 });
       const res = await ingest(items);
       total += res.accepted;
       await dealPushes(res.events, STORE_NAMES);
