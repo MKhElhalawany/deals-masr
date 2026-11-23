@@ -223,4 +223,20 @@ select pg_temp.check((select count(*) from public.scan_log where target_id = (se
 delete from public.scan_targets where store = 'rlstest';
 delete from public.stores where id = 'rlstest';
 
+-- phone assist: signed-in phones claim one Jumia page per 45 s; nothing else
+insert into public.scan_targets (store, url, kind) values ('jumia', 'https://www.jumia.com.eg/rls-phone-test/', 'seed');
+update public.scan_targets set next_run_at = now() - interval '10 years' where url = 'https://www.jumia.com.eg/rls-phone-test/';
+set role anon;
+select pg_temp.must_fail($$select * from public.claim_phone_target('jumia')$$);
+reset role;
+set role authenticated;
+select set_config('request.jwt.claim.sub', 'a1111111-1111-4111-8111-111111111111', false);
+select pg_temp.check((select count(*) from public.claim_phone_target('amazon')) = 0, 'phones only help stores that block the server');
+select pg_temp.check((select url from public.claim_phone_target('jumia')) = 'https://www.jumia.com.eg/rls-phone-test/', 'phone claims a due Jumia page');
+select pg_temp.check((select count(*) from public.claim_phone_target('jumia')) = 0, 'one page per phone per 45 s');
+select pg_temp.must_fail($$select * from public.phone_reports$$);
+reset role;
+delete from public.phone_reports where user_id = 'a1111111-1111-4111-8111-111111111111';
+delete from public.scan_targets where url = 'https://www.jumia.com.eg/rls-phone-test/';
+
 select 'ALL RLS TESTS PASSED';

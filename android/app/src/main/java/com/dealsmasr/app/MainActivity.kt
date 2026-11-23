@@ -62,6 +62,12 @@ class MainActivity : ComponentActivity() {
                     launch {   // live filter follows the user's "notify me from X%" choice
                         container.settings.settings.collect { rt.setMinPct(it.notifyMinPct) }
                     }
+                    launch {   // phone assist (owner-approved): one queued Jumia page per minute, Wi-Fi only
+                        while (true) {
+                            delay(60_000)
+                            runCatching { com.dealsmasr.app.assist.PhoneAssist.step(this@MainActivity, container) }
+                        }
+                    }
                     var tick = 0
                     while (true) {
                         if (container.auth.isSignedIn) {

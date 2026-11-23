@@ -187,6 +187,7 @@ class Supabase(private val store: SessionStore, private val json: Json) {
     }
 
     suspend fun rpc(fn: String): String = call("POST", "/rest/v1/rpc/$fn", "{}", token())
+    suspend fun rpcWith(fn: String, args: JsonObject): String = call("POST", "/rest/v1/rpc/$fn", args.toString(), token())
 
     suspend fun resetPassword(email: String) {
         call("POST", "/auth/v1/recover", buildJsonObject { put("email", email) }.toString(), null)

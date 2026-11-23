@@ -4,6 +4,7 @@
 //   POST {action:"chat", messages:[{role,text}]} → shopping assistant (Gemini free tier, with our real deals)
 import { gemini, geminiConfigured, type Turn } from "./gemini.ts";
 import { dictTranslate, hasArabic, maxPriceOf, normalize, similarity, titleTokens, words } from "./text.ts";
+import { Robots } from "../_shared/robots.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -179,6 +180,56 @@ async function chat(b: any, uid: string) {
   return { reply, products, ai: !!g, model: g?.model ?? null };
 }
 
+// ───────── phone assist: a phone read one queued Jumia page and sends compact product data (validated here)
+async function jumiaRobots(): Promise<Robots | null> {
+  const row = (await rest("GET", "robots_cache?select=body,fetched_at&store=eq.jumia"))[0];
+  if (row && Date.now() - Date.parse(row.fetched_at) < 86400_000) return new Robots(row.body);
+  try {
+    const r = await fetch("https://www.jumia.com.eg/robots.txt", { signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) return row ? new Robots(row.body) : null;
+    const body = await r.text();
+    await rest("POST", "robots_cache", [{ store: "jumia", body: body.slice(0, 200_000), fetched_at: new Date().toISOString() }], "return=minimal,resolution=merge-duplicates");
+    return new Robots(body);
+  } catch { return row ? new Robots(row.body) : null; }
+}
+
+async function phoneReport(b: any, uid: string) {
+  const tid = Number(b.target_id);
+  const claim = (await rest("GET", `phone_reports?select=id&user_id=eq.${uid}&target_id=eq.${tid}&status=eq.claimed&at=gt.${enc(new Date(Date.now() - 10 * 60_000).toISOString())}&order=at.desc&limit=1`))[0];
+  if (!claim) return { error: "no claim" };
+  const status = ["ok", "blocked", "error"].includes(b.status) ? b.status : "error";
+  let saved = 0, events = 0, added = 0;
+  const items: any[] = [];
+  if (status === "ok") {
+    for (const it of (b.items ?? []).slice(0, 80)) {
+      const sku = String(it.sku ?? "").slice(0, 40), url = String(it.url ?? "");
+      const price = Number(it.price), old = Number(it.old);
+      if (!/^[A-Za-z0-9_-]{3,40}$/.test(sku) || !url.startsWith("https://www.jumia.com.eg/")) continue;
+      if (!(price >= 5) || !(old > price) || (old - price) / old > 0.9 || old > 5_000_000) continue;
+      const img = String(it.image_url ?? "");
+      items.push({ id: `jumia:${sku}`, store: "jumia", title: String(it.title ?? "").slice(0, 300), url: url.split("#")[0],
+        image_url: /^https:\/\/[a-z0-9.-]*jumia\.is\//.test(img) ? img : null, current_price: price, original_price: old });
+    }
+    if (items.length) {
+      const r = await rest("POST", "rpc/ingest_deals", { p_items: items, p_min_pct: 10 });
+      saved = r.accepted; events = (r.events ?? []).length;
+    }
+    const robots = await jumiaRobots();
+    if (robots) {
+      const links = [...new Set<string>((b.links ?? []).map(String))].slice(0, 60)
+        .filter((l) => /^\/[a-z0-9-]+\/$/.test(l)).map((l) => `https://www.jumia.com.eg${l}`).filter((u) => robots.ok(u))
+        .map((url) => ({ url, kind: "category", depth: 1, label: url.split("/").filter(Boolean).pop() }));
+      if (links.length) added = Number(await rest("POST", "rpc/add_targets", { p_store: "jumia", p_rows: links })) || 0;
+    }
+  }
+  await rest("POST", "rpc/finish_target", { p_id: tid, p_status: status, p_items: items.length, p_deals: saved, p_new: events, p_fingerprint: null, p_ms: Number(b.ms) || null });
+  await rest("PATCH", `phone_reports?id=eq.${claim.id}`, { status, items: items.length, saved }, "return=minimal");
+  await rest("POST", "scraper_status", [{ store: "jumia", ok: status === "ok", deals_seen: saved, last_run: new Date().toISOString(),
+    message: status === "ok" ? `✓ (من موبايل) ${saved} عرض من ${items.length} · جديد/نزل: ${events} · صفحات جديدة: ${added}` : `⚠️ (من موبايل) ${status}` }],
+    "return=minimal,resolution=merge-duplicates");
+  return { saved, events, added };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const uid = userId(req);
@@ -190,6 +241,7 @@ Deno.serve(async (req) => {
     else if (b.action === "verify") out = await verify(String(b.deal_id ?? ""));
     else if (b.action === "chat") out = await chat(b, uid);
     else if (b.action === "status") out = { ai: geminiConfigured() };
+    else if (b.action === "phone_report") out = await phoneReport(b, uid);
     else out = { error: "unknown action" };
     return Response.json(out, { headers: CORS });
   } catch (e) {

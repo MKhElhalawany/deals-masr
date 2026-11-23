@@ -105,7 +105,7 @@ drop trigger if exists call_scan on public.orders;
 create trigger call_scan after insert or update of status on public.orders for each row execute function public.tg_call_scan();
 """)
     # free plan = 500k runs/month: noon every 20 s (2 pages) + amazon every 30 s ≈ 216k; jumia (Cloudflare-blocked) every 5 min
-    schedules = {"amazon": "30 seconds", "noon": "20 seconds", "jumia": "*/5 * * * *", "townteam": "*/2 * * * *"}
+    schedules = {"amazon": "30 seconds", "noon": "20 seconds", "jumia": "7 * * * *", "townteam": "*/2 * * * *"}
     for s, every in schedules.items():
         S.sql(ref, f"select cron.schedule('scan-{s}', '{every}', $c$select app_private.call_scan('{{\"job\":\"scan\",\"store\":\"{s}\"}}'::jsonb)$c$)")
     # discovery queue seeds (idempotent): store-wide discounted listings, sale pages, category entry points
@@ -120,6 +120,10 @@ create trigger call_scan after insert or update of status on public.orders for e
     noon = ["", "electronics-and-mobiles/", "fashion/eg-fashion-men-cat/", "fashion/eg-fashion-women-cat/", "eg-fashion-footwear/", "beauty/",
             "sports-eg/", "eg-yellow-friday-sale-offers/", "eg-november26-clearance-yfs/", "eg-nov26-yf-fash-clearance-w1/", "Women-fashion-deals/"]
     seeds += [("noon", f"https://www.noon.com/egypt-en/{p}" + ("?limit=50" if p else ""), "seed", p.strip("/") or "home", 60) for p in noon]
+    seeds += [("jumia", u, "seed", u.rstrip("/").rsplit("/", 1)[-1] or "home", 120) for u in
+              ("https://www.jumia.com.eg/", "https://www.jumia.com.eg/flash-sales/", "https://www.jumia.com.eg/phones-tablets/",
+               "https://www.jumia.com.eg/electronics/", "https://www.jumia.com.eg/home-office-appliances/",
+               "https://www.jumia.com.eg/health-beauty/", "https://www.jumia.com.eg/fashion-mw/")]
     seeds += [("townteam", u, "seed", u.rsplit("/", 1)[-1] or "home", 60) for u in
               ("https://townteam.com/", "https://townteam.com/collections/all", "https://townteam.com/collections/spring-offers")]
     values = ",".join(f"({q(st)},{q(u)},{q(k)},{q(l)},0,{mi},{mi})" for st, u, k, l, mi in seeds)
@@ -231,6 +235,12 @@ create trigger call_scan after insert or update of status on public.orders for e
             OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
     except Exception as e:
         OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
+    try:   # B.TECH product data sample (one request) — to build its reader
+        d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret},
+                   json={"job": "debug_url", "url": "https://btech.com/en/collection/black-friday-offers"}).json()
+        print(f"::group::btech sample (HTTP {d.get('code')}, {d.get('length')} bytes, next {d.get('nextData')})\n{d.get('sample', d.get('error', ''))}\n::endgroup::")
+    except Exception as e:
+        print("btech sample failed", e)
     dq = os.path.join(os.path.dirname(__file__), "diag_queries.sql")
     if os.path.exists(dq):
         print("::group::diagnostic queries (read-only)")

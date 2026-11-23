@@ -2,6 +2,8 @@
 # Guard: the Android app must stay a pure client. Fails the build if scraping/browser-automation code or store
 # fetch URLs appear in the app, or if background-worker permissions that a scraper would need come back.
 set -u
+# Exception approved by the owner (2026-11-23): assist/PhoneAssist.kt lets a phone read ONE server-queued page per
+# minute (Wi-Fi, app open) for stores that block cloud servers. It contains no store URLs, no browser automation.
 cd "$(dirname "$0")/../android/app/src/main"
 patterns=(
   'org\.jsoup' 'Jsoup' 'android\.webkit\.WebView' 'evaluateJavascript' 'PageFetcher' 'WebFetcher' 'SheinPricer'

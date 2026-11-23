@@ -357,7 +357,17 @@ Deno.serve(async (req) => {
   try {
     let out: unknown;
     if (body.job === "order") out = await runOrder(String(body.id));
-    else if (body.job === "probe") out = await probe(String(body.url));   // pushes: needed even when the VM worker runs
+    else if (body.job === "probe") out = await probe(String(body.url));
+    else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)
+      const u = new URL(String(body.url));
+      if (!PROBE_HOSTS.includes(u.hostname)) out = { error: "host not allowed" };
+      else {
+        const [code, html] = await fetchPage(u.toString());
+        const nd = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)?.[1] ?? "";
+        const i = nd.search(/"(price|final_price|special_price|regular_price)"/);
+        out = { code, length: html.length, nextData: nd.length, sample: i >= 0 ? nd.slice(Math.max(0, i - 1500), i + 1500) : nd.slice(0, 2500) };
+      }
+    }   // pushes: needed even when the VM worker runs
     else if (await vmAlive()) out = { skipped: "vm worker active" };
     else if (body.job === "scan") {
       const st = String(body.store);

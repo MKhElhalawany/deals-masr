@@ -49,6 +49,8 @@ data class AppSettings(
     val liveIntervalSec: Int,
     val liveWifiOnly: Boolean,
     val notifyMinPct: Int,
+    /** help the server read stores that block it (Jumia) — app open + Wi-Fi only */
+    val phoneAssist: Boolean = true,
     val adminMode: Boolean,
     val celebrated: Set<String>,
 ) {
@@ -89,6 +91,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val adminSeen = stringPreferencesKey("admin_last_order_seen")
         // v2: forces one clean full re-download (drops deals cached before the price-reading fixes)
         val syncCursor = stringPreferencesKey("deals_sync_cursor_v2")
+        val phoneAssist = booleanPreferencesKey("phone_assist")
         val lastFullSync = longPreferencesKey("deals_last_full_sync_v2")
     }
 
@@ -113,6 +116,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         liveIntervalSec = this[K.liveInterval] ?: 20,
         liveWifiOnly = this[K.wifiOnly] ?: false,
         notifyMinPct = this[K.notifyMin] ?: 10,
+        phoneAssist = this[K.phoneAssist] ?: true,
         adminMode = this[K.admin] ?: false,
         celebrated = (this[K.celebrated] ?: "").split(",").filter { it.isNotBlank() }.toSet(),
         extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
@@ -143,6 +147,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
     suspend fun setLiveScan(v: Boolean) = context.dataStore.edit { it[K.live] = v }
     suspend fun setLiveInterval(v: Int) = context.dataStore.edit { it[K.liveInterval] = v }
     suspend fun setLiveWifiOnly(v: Boolean) = context.dataStore.edit { it[K.wifiOnly] = v }
+    suspend fun setPhoneAssist(v: Boolean) = context.dataStore.edit { it[K.phoneAssist] = v }
     suspend fun setNotifyMinPct(v: Int) = context.dataStore.edit { it[K.notifyMin] = v }
     suspend fun setExtraPages(v: String) = context.dataStore.edit { it[K.extraPages] = v }
     suspend fun setScrapeStores(v: Set<String>) = context.dataStore.edit { it[K.stores] = v.joinToString(",") }
