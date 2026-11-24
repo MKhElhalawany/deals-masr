@@ -234,6 +234,8 @@ async function chat(b: any, uid: string) {
     `القايمة: ${JSON.stringify(catalog)}`,
     "وعندك كمان أسعار لحظية من بحث مباشر في المتاجر (مش لازم تكون عروض)، رتبها من الأرخص؛ لو حد سأل عن أرخص سعر قارن بين القايمتين وقول الأرخص بوضوح واذكر رقمه زي [L1].",
     `بحث مباشر: ${JSON.stringify(liveList)}`,
+    ...(b.lang === "en" ? ["IMPORTANT: the user chose English. Reply in clear, friendly English."] : []),
+    ...(typeof b.profile === "string" && b.profile ? [`اهتمامات المستخدم (اتعلمناها من استخدامه للتطبيق، استخدمها للترشيح): ${b.profile.slice(0, 300)}`] : []),
   ].join("\n");
   const turns: Turn[] = msgs.map((m) => ({ role: m.role as "user" | "model", text: m.text }));
   while (turns.length && turns[0].role !== "user") turns.shift();

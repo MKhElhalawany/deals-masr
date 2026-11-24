@@ -91,14 +91,17 @@ private val AppShapes = androidx.compose.material3.Shapes(
 )
 
 @Composable
-fun DealsTheme(mode: ThemeMode = ThemeMode.SYSTEM, content: @Composable () -> Unit) {
+fun DealsTheme(mode: ThemeMode = ThemeMode.SYSTEM, language: String = "ar", content: @Composable () -> Unit) {
     val dark = when (mode) {
         ThemeMode.SYSTEM -> isSystemInDarkTheme()
         ThemeMode.LIGHT -> false
         ThemeMode.DARK -> true
     }
-    // Arabic-first: force RTL regardless of the device language.
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+    // Arabic-first: RTL regardless of the device language; English (chosen in Settings) is LTR.
+    CompositionLocalProvider(
+        LocalLayoutDirection provides if (language == "en") LayoutDirection.Ltr else LayoutDirection.Rtl,
+        com.dealsmasr.app.ui.i18n.LocalLang provides language,
+    ) {
         MaterialTheme(colorScheme = if (dark) DarkColors else LightColors, typography = AppTypography, shapes = AppShapes, content = content)
     }
 }

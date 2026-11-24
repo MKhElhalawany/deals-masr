@@ -24,7 +24,8 @@ class AppContainer(context: Context) {
     val supabase = com.dealsmasr.app.data.auth.Supabase(sessionStore, api.json)
     val auth = com.dealsmasr.app.data.auth.AuthRepository(supabase, sessionStore, settings, api.json, appScope)
     val admin = com.dealsmasr.app.data.auth.AdminRepository(supabase, api.json)
-    val deals = DealsRepository(supabase, api.json, settings, db.deals(), db.favorites(), db.alerts())
+    val interests = com.dealsmasr.app.core.Interests(settings, api.json)
+    val deals = DealsRepository(supabase, api.json, settings, db.deals(), db.favorites(), db.alerts(), interests)
     val shein = SheinRepository(context, supabase, api, settings, db.cart(), db.orders())
     val realtime = com.dealsmasr.app.data.realtime.RealtimeClient(supabase, api.json, appScope)
 }
@@ -35,6 +36,7 @@ class DealsApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.dealsmasr.app.ui.i18n.MlTranslate.init(this)
         container = AppContainer(this)
         Notifier.createChannels(this)
         WorkScheduler.schedule(this)

@@ -95,7 +95,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
             val authState by container.auth.state.collectAsStateWithLifecycle()
-            DealsTheme(settings?.theme ?: ThemeMode.SYSTEM) {
+            LaunchedEffect(settings?.language) {
+                if (settings?.language == "en") runCatching { com.dealsmasr.app.ui.i18n.MlTranslate.warmUp() }
+            }
+            DealsTheme(settings?.theme ?: ThemeMode.SYSTEM, settings?.language ?: "ar") {
                 when (authState) {
                     AuthState.Loading -> SplashScreen()
                     AuthState.NotConfigured, AuthState.SignedOut -> AuthScreen(notConfigured = authState == AuthState.NotConfigured)

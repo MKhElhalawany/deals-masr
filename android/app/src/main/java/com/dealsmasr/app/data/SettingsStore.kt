@@ -53,6 +53,8 @@ data class AppSettings(
     val phoneAssist: Boolean = true,
     val adminMode: Boolean,
     val celebrated: Set<String>,
+    /** "ar" or "en" (app UI language) */
+    val language: String = "ar",
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -93,6 +95,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val syncCursor = stringPreferencesKey("deals_sync_cursor_v2")
         val phoneAssist = booleanPreferencesKey("phone_assist")
         val lastFullSync = longPreferencesKey("deals_last_full_sync_v2")
+        val language = stringPreferencesKey("ui_language")
+        val interests = stringPreferencesKey("learned_interests")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -118,6 +122,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         notifyMinPct = this[K.notifyMin] ?: 10,
         phoneAssist = this[K.phoneAssist] ?: true,
         adminMode = this[K.admin] ?: false,
+        language = if (this[K.language] == "en") "en" else "ar",
         celebrated = (this[K.celebrated] ?: "").split(",").filter { it.isNotBlank() }.toSet(),
         extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
     )
@@ -147,6 +152,10 @@ class SettingsStore(private val context: Context, private val json: Json) {
     suspend fun setLiveScan(v: Boolean) = context.dataStore.edit { it[K.live] = v }
     suspend fun setLiveInterval(v: Int) = context.dataStore.edit { it[K.liveInterval] = v }
     suspend fun setLiveWifiOnly(v: Boolean) = context.dataStore.edit { it[K.wifiOnly] = v }
+    suspend fun setLanguage(v: String) = context.dataStore.edit { it[K.language] = if (v == "en") "en" else "ar" }
+    /** learned interest weights (JSON map "kind:value" → score), kept only on this phone */
+    suspend fun interests(): String = context.dataStore.data.first()[K.interests].orEmpty()
+    suspend fun setInterests(v: String) = context.dataStore.edit { it[K.interests] = v }
     suspend fun setPhoneAssist(v: Boolean) = context.dataStore.edit { it[K.phoneAssist] = v }
     suspend fun setNotifyMinPct(v: Int) = context.dataStore.edit { it[K.notifyMin] = v }
     suspend fun setExtraPages(v: String) = context.dataStore.edit { it[K.extraPages] = v }

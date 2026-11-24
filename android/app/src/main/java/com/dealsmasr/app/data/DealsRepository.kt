@@ -63,6 +63,7 @@ class DealsRepository(
     private val dealDao: DealDao,
     private val favoriteDao: FavoriteDao,
     private val alertDao: AlertDao,
+    private val interests: com.dealsmasr.app.core.Interests? = null,
 ) {
     val cachedDeals: Flow<List<DealEntity>> = dealDao.observeAll()
     val favorites: Flow<List<FavoriteEntity>> = favoriteDao.observeAll()
@@ -173,6 +174,7 @@ class DealsRepository(
      * filters and sorting on the server. [askServer] lets the server also search the stores live for new queries.
      */
     suspend fun searchApi(query: String, filters: SearchFilters, sort: String, page: Int = 1, askServer: Boolean = false): SearchResult {
+        if (page == 1 && query.isNotBlank()) runCatching { interests?.searched(query) }
         val body = buildJsonObject {
             put("action", "search"); put("q", query.trim().take(100)); put("page", page)
             put("sort", when (sort) { "price_asc", "price_desc", "newest" -> sort; else -> "discount" })
@@ -223,6 +225,8 @@ class DealsRepository(
     suspend fun chat(history: List<Pair<Boolean, String>>): ChatReply {
         val body = buildJsonObject {
             put("action", "chat")
+            put("lang", settings.current().language)
+            interests?.let { i -> runCatching { i.profile() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { put("profile", it) } }
             put("messages", buildJsonArray {
                 history.takeLast(10).forEach { (mine, t) -> add(buildJsonObject { put("role", if (mine) "user" else "assistant"); put("text", t) }) }
             })
@@ -249,6 +253,7 @@ class DealsRepository(
             rows(supabase.select("price_history", "select=current_price,original_price,checked_at&deal_id=eq.${enc(id)}&order=checked_at.asc&limit=200"))
                 .map { PricePointDto(it.num("original_price") ?: 0.0, it.num("current_price") ?: 0.0, epoch(it.str("checked_at"))) }
         }.getOrDefault(emptyList())
+        runCatching { interests?.opened(d) }
         return d.copy(history = hist)
     }
 
@@ -285,6 +290,7 @@ class DealsRepository(
             favoriteDao.delete(d.id)
             runCatching { supabase.delete("favorites", "deal_id=eq.${enc(d.id)}") }
         } else {
+            runCatching { interests?.favorited(d) }
             favoriteDao.upsert(d.toFavorite(System.currentTimeMillis()))
             runCatching { supabase.insert("favorites", buildJsonObject { put("deal_id", d.id) }) }
         }

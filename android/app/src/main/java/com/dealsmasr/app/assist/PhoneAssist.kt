@@ -65,6 +65,12 @@ object PhoneAssist {
                     } else note = "http=${r.code}"
                 }
         }.onFailure { Log.w(TAG, "fetch: ${it.message}") }
+        // the grid is drawn by the page's script → read it once in an invisible WebView (stops at any protection page)
+        if (status == "ok" && cards.isEmpty()) {
+            runCatching { JumiaWebView.read(ctx, url, c.api.json) }.onSuccess { r ->
+                status = r.status; cards = r.items; if (r.links.isNotEmpty()) links = r.links; note = "$note | ${r.note}"
+            }.onFailure { note = "$note | webview ${it.javaClass.simpleName}" }
+        }
         runCatching {
             c.supabase.fn("api", buildJsonObject {
                 put("action", "phone_report"); put("target_id", id); put("status", status); put("ms", System.currentTimeMillis() - t0); put("note", note)

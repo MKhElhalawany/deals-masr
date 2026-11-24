@@ -32,7 +32,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
+import com.dealsmasr.app.ui.i18n.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -130,6 +130,10 @@ fun HomeScreen(
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshIfStale() }
+    val container = com.dealsmasr.app.ui.appContainer()
+    val forYou by androidx.compose.runtime.produceState(emptyList<com.dealsmasr.app.data.remote.DealDto>(), s.deals) {
+        value = runCatching { container.interests.recommend(s.deals, 15) }.getOrDefault(emptyList())
+    }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -168,6 +172,17 @@ fun HomeScreen(
                             Text("آخر تحديث ${relativeTime(s.lastRefresh / 1000)} · ${s.deals.size} عرض",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                        if (forYou.isNotEmpty()) {
+                            item(key = "h_foryou") { SectionHeader("✨ مختار ليك (بيتعلم من اهتماماتك)") }
+                            item(key = "r_foryou") {
+                                LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(forYou, key = { "fy_" + it.id }) { d ->
+                                        ProductCard(d, d.id in s.favoriteIds, { vm.toggleFavorite(d) }, { onProduct(d.id) }, Modifier.width(160.dp))
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
                         }
                         // Highest tiers first: Mega → Super → Hot are the most prominent.
                         s.tiers.sortedByDescending { it.minPct }.forEach { tier ->

@@ -26,7 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
+import com.dealsmasr.app.ui.i18n.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -112,6 +112,15 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                     scope.launch { c.settings.setPhoneAssist(on) }
                 }
                 Text("جوميا بتحجب السيرفرات. الموبايل بيقرا صفحة واحدة كل دقيقة على الأكتر من قايمة السيرفر، ومابيستهلكش باقة الموبايل.",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Section("اللغة") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("ar" to "العربية", "en" to "English").forEach { (code, label) ->
+                        FilterChip(selected = st.language == code, onClick = { scope.launch { c.settings.setLanguage(code) } }, label = { Text(label) })
+                    }
+                }
+                if (st.language == "en") Text("The first time, the app downloads a free on-device translator (~30 MB) for the remaining texts.",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Section("المظهر") {
