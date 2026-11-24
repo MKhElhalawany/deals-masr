@@ -1,5 +1,5 @@
 // AI audit of deals: category (sidebar menu) + fake "before price" detection. Free Gemini tier, 40 deals per call.
-import { gemini } from "../_shared/gemini.ts";
+import { gemini } from "./gemini.ts";
 
 export const CATEGORIES = [
   "ملابس/رجالي", "ملابس/حريمي", "ملابس/أطفال", "ملابس/أحذية", "ملابس/شنط واكسسوارات",

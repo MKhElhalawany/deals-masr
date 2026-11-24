@@ -217,7 +217,8 @@ class DealsRepository(
     }
 
     // ───────── assistant
-    data class ChatReply(val text: String, val products: List<DealDto>, val limited: Boolean)
+    data class LiveOffer(val label: String, val title: String, val store: String, val price: Double, val url: String, val imageUrl: String?)
+    data class ChatReply(val text: String, val products: List<DealDto>, val limited: Boolean, val live: List<LiveOffer> = emptyList())
 
     suspend fun chat(history: List<Pair<Boolean, String>>): ChatReply {
         val body = buildJsonObject {
@@ -229,7 +230,13 @@ class DealsRepository(
         val o = json.parseToJsonElement(supabase.fn("api", body)).jsonObject
         o.str("error")?.let { throw IllegalStateException(it) }
         val products = (o["products"]?.jsonArray ?: JsonArray(emptyList())).map { toDeal(it.jsonObject) }
-        return ChatReply(o.str("reply").orEmpty(), products, (o["limited"] as? JsonPrimitive)?.booleanOrNull == true)
+        val live = (o["live"]?.jsonArray ?: JsonArray(emptyList())).mapNotNull { e ->
+            val x = e.jsonObject
+            val url = x.str("url")?.takeIf { it.startsWith("https://") } ?: return@mapNotNull null
+            val store = x.str("store").orEmpty()
+            LiveOffer(x.str("n").orEmpty(), x.str("title").orEmpty(), storeNames[store] ?: store, x.num("price") ?: return@mapNotNull null, url, x.str("image_url"))
+        }
+        return ChatReply(o.str("reply").orEmpty(), products, (o["limited"] as? JsonPrimitive)?.booleanOrNull == true, live)
     }
 
     suspend fun search(query: String, filters: SearchFilters, sort: String, page: Int = 1, askServer: Boolean = false): DealPage =

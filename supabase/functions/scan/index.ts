@@ -6,7 +6,7 @@ const checkedAsins = new Map<string, number>();   // product pages already check
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
 import { categoryLinks, fingerprint, nextPage, Robots } from "./discover.ts";
-import { audit } from "./audit.ts";
+import { audit } from "../_shared/audit.ts";
 import { parseTelegram } from "./telegram.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
@@ -376,6 +376,25 @@ async function runTelegram(channel: string) {
   return { latest: latest.length, older: older.length, oldest, withPrice: latest.filter((p) => p.price).length };
 }
 
+// ───────── "يستاهل ولا لأ؟": live prices of the same kind of product (stores whose search page robots.txt allows)
+async function runCompare(q: string) {
+  if (q.trim().length < 3) return { offers: [] };
+  const offers: { store: string; title: string; url: string; price: number; image_url: string | null }[] = [];
+  const robots = await robotsFor("amazon");
+  const url = STORES.amazon.search!(q);
+  if (robots?.ok(url)) {
+    try {
+      const [code, html] = await fetchPage(url);
+      if (code === 200) {
+        const [deals] = STORES.amazon.parse(html);
+        for (const d of deals) offers.push({ store: "amazon", title: d.title, url: d.url, price: d.current_price, image_url: d.image_url });
+        for (const c of amazonCandidates) offers.push({ store: "amazon", title: c.title, url: `https://www.amazon.eg/dp/${c.asin}`, price: c.current, image_url: c.image_url });
+      }
+    } catch (e) { console.warn("compare", String(e)); }
+  }
+  return { offers: offers.slice(0, 30) };
+}
+
 // ───────── AI audit: category for the side menu + hide deals with an inflated "before" price (free Gemini tier)
 async function runAudit(n: number) {
   const rows = await select(`deals?select=id,title,store,current_price,original_price&active=eq.true&audit_status=eq.unchecked&order=deal_pct.desc.nullslast&limit=${n}`);
@@ -400,6 +419,7 @@ Deno.serve(async (req) => {
     if (body.job === "order") out = await runOrder(String(body.id));
     else if (body.job === "probe") out = await probe(String(body.url));
     else if (body.job === "telegram") out = await runTelegram(String(body.channel ?? "deals_me"));
+    else if (body.job === "compare") out = await runCompare(String(body.q ?? "").slice(0, 120));
     else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 40));
     else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)
       const u = new URL(String(body.url));

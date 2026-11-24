@@ -55,7 +55,8 @@ import com.dealsmasr.app.ui.components.NetImage
 import com.dealsmasr.app.ui.components.userMessage
 import kotlinx.coroutines.launch
 
-private data class Msg(val mine: Boolean, val text: String, val products: List<DealDto> = emptyList())
+private data class Msg(val mine: Boolean, val text: String, val products: List<DealDto> = emptyList(),
+    val live: List<com.dealsmasr.app.data.DealsRepository.LiveOffer> = emptyList())
 
 private val SUGGESTIONS = listOf(
     "رشحلي موبايل كويس تحت 15000",
@@ -82,7 +83,7 @@ fun AssistantScreen(onProduct: (String) -> Unit) {
         msgs.add(Msg(true, t)); input = ""; busy = true
         scope.launch {
             runCatching { c.deals.chat(msgs.drop(1).map { it.mine to it.text }) }
-                .onSuccess { msgs.add(Msg(false, it.text, it.products)) }
+                .onSuccess { msgs.add(Msg(false, it.text, it.products, it.live)) }
                 .onFailure { msgs.add(Msg(false, "معلش، حصلت مشكلة: ${it.userMessage()}")) }
             busy = false
         }
@@ -138,6 +139,25 @@ private fun Bubble(m: Msg, onProduct: (String) -> Unit) {
                             Text(Money.egp(d.currentPrice), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
                             Text("${d.marketplaceName} · -${d.discountPct.toInt()}%", style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+        if (m.live.isNotEmpty()) {
+            val ctx = LocalContext.current
+            Spacer(Modifier.padding(3.dp))
+            Text("أسعار لحظية من المتاجر:", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(m.live.size) { i ->
+                    val o = m.live[i]
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp,
+                        modifier = Modifier.width(150.dp).clickable { com.dealsmasr.app.ui.product.openUrl(ctx, o.url) }) {
+                        Column(Modifier.padding(8.dp)) {
+                            NetImage(o.imageUrl, Modifier.fillMaxWidth().size(90.dp))
+                            Text("[${o.label}] ${o.title}", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
+                            Text(Money.egp(o.price), color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Text(o.store, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

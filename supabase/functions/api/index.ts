@@ -5,10 +5,11 @@
 import { gemini, geminiConfigured, type Turn } from "../_shared/gemini.ts";
 import { dictTranslate, hasArabic, maxPriceOf, normalize, similarity, titleTokens, words } from "./text.ts";
 import { Robots } from "../_shared/robots.ts";
+import { audit } from "../_shared/audit.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const COLS = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,deal_pct,min_discount_pct,best_price,rating,rating_count,active,deal_since,last_checked,updated_at";
+const COLS = "id,store_id,title,url,image_url,category,audit_status,audit_note,typical_low,typical_high,brand,seller,original_price,current_price,discount_pct,deal_pct,min_discount_pct,best_price,rating,rating_count,active,deal_since,last_checked,updated_at";
 const STORE_AR: Record<string, string> = { amazon: "أمازون", noon: "نون", jumia: "جوميا", townteam: "تاون تيم" };
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type" };
 
@@ -73,12 +74,40 @@ async function search(b: any, uid: string) {
 }
 
 // ───────── "يستاهل ولا لأ؟"
+/** live offers from the scan function (robots-checked store search), empty on any problem */
+async function liveOffers(q: string): Promise<{ store: string; title: string; url: string; price: number; image_url: string | null }[]> {
+  const secret = Deno.env.get("CRON_SECRET");
+  if (!secret || q.length < 3) return [];
+  try {
+    const r = await fetch(`${URL_}/functions/v1/scan`, { method: "POST", signal: AbortSignal.timeout(12_000),
+      headers: { "Content-Type": "application/json", "x-cron-secret": secret }, body: JSON.stringify({ job: "compare", q }) });
+    return r.ok ? ((await r.json()).offers ?? []).filter((o: any) => Number(o.price) > 0) : [];
+  } catch { return []; }
+}
+
+/** which candidates are the SAME product (model/size/pack) — AI when available, else strict title similarity */
+async function sameProduct<T extends { title: string; price: number }>(title: string, price: number, pool: T[]): Promise<T[]> {
+  if (!pool.length) return [];
+  const g = await gemini("You match products. Given a target product and numbered candidates, return a JSON array of the numbers " +
+    "of candidates that are the SAME product (same brand, model, size/capacity and pack count; color may differ). Reply [] if none.",
+    [{ role: "user", text: JSON.stringify({ target: { title: title.slice(0, 200), price }, candidates: pool.map((p, i) => ({ n: i, title: p.title.slice(0, 160), price: p.price })) }) }],
+    { json: true, maxTokens: 200, temperature: 0 });
+  if (g) {
+    try {
+      const ids = JSON.parse(g.text);
+      if (Array.isArray(ids)) return ids.map(Number).filter((i) => pool[i]).map((i) => pool[i])
+        .filter((p) => p.price > price * 0.3 && p.price < price * 3);   // guard against accessories / bundles
+    } catch { /* fall through */ }
+  }
+  return pool.filter((p) => similarity(p.title, title) >= 0.75 && p.price > price * 0.4 && p.price < price * 2.5);
+}
+
 async function verify(dealId: string) {
   const d = (await rest("GET", `deals?select=${COLS}&id=eq.${enc(dealId)}`))[0];
   if (!d) return { error: "العرض ده مبقاش موجود" };
   const price = Number(d.current_price);
   const cached = (await rest("GET", `deal_verdicts?select=result,created_at&deal_id=eq.${enc(dealId)}&price=eq.${price}`))[0];
-  if (cached && Date.now() - Date.parse(cached.created_at) < 12 * 3600_000) return cached.result;
+  if (cached && cached.result?.code !== "insufficient" && Date.now() - Date.parse(cached.created_at) < 12 * 3600_000) return cached.result;
 
   const hist: { current_price: string; original_price: string | null; checked_at: string }[] =
     await rest("GET", `price_history?select=current_price,original_price,checked_at&deal_id=eq.${enc(dealId)}&order=checked_at.asc&limit=500`);
@@ -90,25 +119,49 @@ async function verify(dealId: string) {
   const orig = d.original_price ? Number(d.original_price) : null;
   const origEverCharged = orig ? prices.some((p) => p >= orig * 0.97) : false;
 
-  // same product in other stores (our data): match distinctive title tokens
+  // 1) candidates: our whole database (every store, active or recent) + live store search (robots-allowed)
   const toks = titleTokens(d.title).slice(0, 3);
-  let cheaper: any = null;
-  if (toks.length >= 2) {
-    const others = await rest("GET", `deals?select=id,store_id,title,url,current_price,image_url&active=eq.true&store_id=neq.${d.store_id}&and=(${toks.map(ilikeWord).join(",")})&order=current_price.asc&limit=10`);
-    cheaper = others.find((o: any) => similarity(o.title, d.title) >= 0.7 && Number(o.current_price) < price * 0.97) ?? null;
+  let pool: { id?: string; store: string; title: string; url: string; price: number; image_url: string | null }[] = [];
+  if (toks.length >= 1) {
+    const rows = await rest("GET", `deals?select=id,store_id,title,url,current_price,image_url,last_checked&id=neq.${enc(dealId)}&last_checked=gt.${enc(new Date(Date.now() - 14 * 86400_000).toISOString())}&and=(${toks.slice(0, 2).map(ilikeWord).join(",")})&order=current_price.asc&limit=25`).catch(() => []);
+    pool = rows.map((o: any) => ({ id: o.id, store: o.store_id, title: o.title, url: o.url, price: Number(o.current_price), image_url: o.image_url }));
+  }
+  const live = await liveOffers(words(d.title).slice(0, 6).join(" "));
+  for (const o of live) if (!pool.some((p) => p.url === o.url) && o.url !== d.url) pool.push(o);
+  const matches = await sameProduct(d.title, price, pool.slice(0, 40));
+  const cheapest = matches.length ? matches.reduce((a, b) => (b.price < a.price ? b : a)) : null;
+  const cheaper: any = cheapest && cheapest.price < price * 0.97
+    ? { id: cheapest.id ?? null, store_id: cheapest.store, title: cheapest.title, url: cheapest.url, current_price: cheapest.price, image_url: cheapest.image_url } : null;
+
+  // 2) the AI's estimate of the normal Egyptian price (from the audit, or now)
+  let tLow = d.typical_low ? Number(d.typical_low) : null, tHigh = d.typical_high ? Number(d.typical_high) : null;
+  let fakeNote: string | null = d.audit_status === "fake" ? d.audit_note : null;
+  if (!tHigh && d.audit_status !== "fake") {
+    const a = await audit([{ id: d.id, title: d.title, store: d.store_id, current_price: price, original_price: d.original_price ? Number(d.original_price) : null }]).catch(() => null);
+    if (a?.[0]) {
+      tLow = a[0].typical_low; tHigh = a[0].typical_high;
+      if (a[0].status === "fake") fakeNote = a[0].note;
+      await rest("POST", "rpc/apply_audit", { p_rows: a }).catch(() => {});
+    }
   }
 
   const enough = hist.length >= 3 || days >= 3;
   let verdict: string, code: string, score: number | null = null;
   if (cheaper) { code = "cheaper"; verdict = "مايستاهلش — فيه أرخص"; }
-  else if (!enough) { code = "insufficient"; verdict = "بيانات غير كافية للحكم"; }
-  else if (orig && !origEverCharged && days >= 7 && highest <= price * 1.03) { code = "fake"; verdict = "الخصم مش موثوق"; }
-  else if (price <= lowest * 1.01 && Number(d.deal_pct) >= 30) { code = "excellent"; verdict = "صفقة ممتازة"; }
-  else if (price <= lowest * 1.05) { code = "good"; verdict = "سعر جيد"; }
-  else { code = "normal"; verdict = "خصم عادي، مش أفضل وقت للشراء"; }
-  if (enough && !cheaper) {
-    const pos = highest > lowest ? (highest - price) / (highest - lowest) : 0.5;   // 1 = at the lowest we have seen
-    score = Math.round(Math.min(10, Math.max(0, 3 + pos * 4 + Math.min(3, Number(d.deal_pct ?? 0) / 20) - (code === "fake" ? 4 : 0))));
+  else if (fakeNote || (orig && enough && !origEverCharged && days >= 7 && highest <= price * 1.03)) { code = "fake"; verdict = "الخصم مش موثوق"; }
+  else if (matches.length && price <= cheapest!.price * 1.01) { code = Number(d.deal_pct) >= 30 ? "excellent" : "good"; verdict = "يستاهل ✓ — ده أرخص سعر لقيناه"; }
+  else if (tLow && tHigh && price <= tLow) { code = "excellent"; verdict = "يستاهل ✓ — أقل من سعره المعتاد"; }
+  else if (tHigh && price <= tHigh) { code = "good"; verdict = "يستاهل — سعر كويس"; }
+  else if (tHigh && price > tHigh * 1.15) { code = "normal"; verdict = "غالي شوية عن سعره المعتاد"; }
+  else if (enough && price <= lowest * 1.01 && Number(d.deal_pct) >= 30) { code = "excellent"; verdict = "صفقة ممتازة"; }
+  else if (enough && price <= lowest * 1.05) { code = "good"; verdict = "سعر جيد"; }
+  else if (enough) { code = "normal"; verdict = "خصم عادي، مش أفضل وقت للشراء"; }
+  else { code = "good"; verdict = "سعر معقول"; }
+  {
+    const pos = highest > lowest ? (highest - price) / (highest - lowest) : 0.5;
+    const vsTypical = tHigh ? Math.max(-2, Math.min(3, (tHigh - price) / tHigh * 6)) : 0;
+    score = code === "cheaper" ? 3 : code === "fake" ? 2 :
+      Math.round(Math.min(10, Math.max(0, 4 + pos * 2 + vsTypical + Math.min(2, Number(d.deal_pct ?? 0) / 25))));
   }
   const facts = {
     product: d.title.slice(0, 160), store: STORE_AR[d.store_id] ?? d.store_id, current_price: price, advertised_original: orig,
@@ -116,7 +169,9 @@ async function verify(dealId: string) {
     lowest_seen: lowest, highest_seen: highest, original_ever_charged: orig ? origEverCharged : "no original price shown",
     coupon_price: d.best_price ? Number(d.best_price) : null,
     cheaper_elsewhere: cheaper ? { store: STORE_AR[cheaper.store_id] ?? cheaper.store_id, price: Number(cheaper.current_price) } : null,
-    verdict,
+    same_product_offers: matches.slice(0, 5).map((m) => ({ store: STORE_AR[m.store] ?? m.store, price: m.price })),
+    typical_price_egypt: tHigh ? { low: tLow, high: tHigh, source: "تقدير الذكاء الاصطناعي" } : null,
+    fake_reason: fakeNote, verdict,
   };
   const g = await gemini(
     "انت مساعد تسوق مصري أمين. اكتب 2 إلى 3 جمل قصيرة بالعامية المصرية تشرح الحكم على العرض باستخدام الأرقام المعطاة فقط. " +
@@ -124,8 +179,11 @@ async function verify(dealId: string) {
     [{ role: "user", text: JSON.stringify(facts) }], { maxTokens: 220, temperature: 0.3 });
   const fallback = [
     cheaper ? `نفس المنتج تقريباً على ${facts.cheaper_elsewhere!.store} بـ ${Math.round(cheaper.current_price)} ج.م بدل ${Math.round(price)}.` : null,
+    !cheaper && matches.length ? `قارنّا بـ ${matches.length} عرض لنفس المنتج، وده أرخصهم.` : null,
+    tHigh ? `سعره المعتاد في مصر تقريباً من ${Math.round(tLow ?? tHigh * 0.8)} لـ ${Math.round(tHigh)} ج.م.` : null,
+    fakeNote ? `تنبيه: ${fakeNote}.` : null,
     enough ? `أقل سعر شفناه ${Math.round(lowest)} ج.م وأعلى سعر ${Math.round(highest)} ج.م خلال ${Math.max(1, Math.round(days))} يوم.` :
-      `بدأنا نتابع السعر من ${Math.max(1, Math.round(days))} يوم بس، فلسه بدري نحكم.`,
+      null,
     orig && enough && !origEverCharged ? "السعر قبل الخصم ماشفناهوش متباع بيه قبل كده." : null,
   ].filter(Boolean).join(" ");
   const result = { verdict, code, score, explanation: g?.text ?? fallback, ai: !!g, model: g?.model ?? null, facts,
@@ -162,6 +220,10 @@ async function chat(b: any, uid: string) {
   const catalog = products.map((p, i) => ({ n: i + 1, title: p.title.slice(0, 120), store: STORE_AR[p.store_id] ?? p.store_id,
     price: Number(p.current_price), before: p.original_price ? Number(p.original_price) : null, discount: Number(p.deal_pct ?? 0),
     coupon_price: p.best_price ? Number(p.best_price) : null }));
+  // live prices right now (store search allowed by robots.txt), cheapest first, so the bot can name the lowest price
+  const live = queryWords.length ? (await liveOffers((en ?? last).slice(0, 80)))
+    .filter((o) => !maxPrice || o.price <= maxPrice).sort((a, b) => a.price - b.price).slice(0, 6) : [];
+  const liveList = live.map((o, i) => ({ n: `L${i + 1}`, title: o.title.slice(0, 120), store: STORE_AR[o.store] ?? o.store, price: o.price }));
   const system = [
     "انت \"مساعد عروض مصر\": مساعد تسوق ذكي بالعامية المصرية، ودود ومختصر ومفيد.",
     "بتساعد في: ترشيح منتجات حسب الميزانية والاستخدام، المقارنات، شرح المواصفات، المقاسات، وهل العرض يستاهل.",
@@ -170,6 +232,8 @@ async function chat(b: any, uid: string) {
     "لما تقول معلومة عامة من معرفتك (مش من القايمة) وضّح إنها معلومة عامة ممكن تختلف.",
     "اسأل سؤال توضيحي واحد بس لو الطلب مش واضح فعلاً (زي الميزانية أو المقاس).",
     `القايمة: ${JSON.stringify(catalog)}`,
+    "وعندك كمان أسعار لحظية من بحث مباشر في المتاجر (مش لازم تكون عروض)، رتبها من الأرخص؛ لو حد سأل عن أرخص سعر قارن بين القايمتين وقول الأرخص بوضوح واذكر رقمه زي [L1].",
+    `بحث مباشر: ${JSON.stringify(liveList)}`,
   ].join("\n");
   const turns: Turn[] = msgs.map((m) => ({ role: m.role as "user" | "model", text: m.text }));
   while (turns.length && turns[0].role !== "user") turns.shift();
@@ -177,7 +241,7 @@ async function chat(b: any, uid: string) {
   const reply = g?.text ?? (products.length
     ? "المساعد الذكي مشغول دلوقتي، بس دي أقرب العروض الحقيقية لطلبك:"
     : "المساعد الذكي مشغول دلوقتي ومالقيتش عروض مطابقة في قاعدة بياناتنا. جرب كلمة بحث تانية من صفحة البحث.");
-  return { reply, products, ai: !!g, model: g?.model ?? null };
+  return { reply, products, live: live.map((o, i) => ({ ...o, n: `L${i + 1}` })), ai: !!g, model: g?.model ?? null };
 }
 
 // ───────── phone assist: a phone read one queued Jumia page and sends compact product data (validated here)
