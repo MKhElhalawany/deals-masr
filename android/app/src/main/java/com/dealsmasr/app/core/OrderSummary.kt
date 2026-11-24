@@ -54,7 +54,7 @@ object OrderSummary {
         if (!o.notes.isNullOrBlank()) appendLine("📝 ملاحظات العميل: ${o.notes}")
         appendLine("————————")
         appendLine("سعر المنتجات: ${Money.egp(o.breakdown.subtotalEgp)}")
-        appendLine("التوصيل: ${Money.egp(o.breakdown.deliveryFeeEgp)}")
+        appendLine("التوصيل: " + if (o.breakdown.deliveryFeeEgp.signum() == 0) "مجاني (شامل في السعر)" else Money.egp(o.breakdown.deliveryFeeEgp))
         append("💰 الإجمالي المطلوب: ${Money.egp(o.breakdown.totalEgp)}")
     }
 }

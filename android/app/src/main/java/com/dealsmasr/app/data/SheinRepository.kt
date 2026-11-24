@@ -196,6 +196,15 @@ class SheinRepository(
         }.getOrElse { fallback(base, manualPriceSar, it) }
     }
 
+    /** A product the user picked while browsing SHEIN Saudi in the app (price read from the product page). */
+    suspend fun addFromBrowser(url: String, title: String, imageUrl: String?, originalSar: Double, size: String, color: String, quantity: Int): AddResult {
+        if (!SheinLink.isSheinUrl(url) || originalSar <= 0) return AddResult.Error("مقدرناش نقرا سعر المنتج")
+        cartDao.insert(CartItemEntity(inputType = "url", inputValue = url, productUrl = url, saUrl = url, title = title.take(300),
+            imageUrl = imageUrl, priceSar = originalSar, priceSource = "browser", quoteStatus = "quoted",
+            size = size.take(40), color = color.take(60), quantity = quantity.coerceIn(1, 20), addedAt = now()))
+        return AddResult.AddedPriced
+    }
+
     suspend fun addByText(text: String, manualPriceSar: Double?): AddResult {
         if (text.isBlank()) return AddResult.Error("اكتب اسم المنتج")
         val base = CartItemEntity(inputType = "text", inputValue = text.trim(), title = text.trim(), addedAt = now(),

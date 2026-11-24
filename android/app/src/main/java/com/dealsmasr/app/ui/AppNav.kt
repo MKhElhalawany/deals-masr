@@ -56,7 +56,7 @@ private val TABS = listOf(
     Tab("home", "الرئيسية", Icons.Outlined.Home, Icons.Filled.Home),
     Tab("deals", "العروض", Icons.Outlined.LocalOffer, Icons.Filled.LocalOffer),
     Tab("search", "البحث", Icons.Outlined.Search, Icons.Filled.Search),
-    Tab("shein", "SHEIN", Icons.Outlined.ShoppingBag, Icons.Filled.ShoppingBag),
+    Tab("shein", "شي إن", Icons.Outlined.ShoppingBag, Icons.Filled.ShoppingBag),
     Tab("assistant", "المساعد", Icons.Outlined.AutoAwesome, Icons.Filled.AutoAwesome),
 )
 
@@ -86,7 +86,7 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
 
     LaunchedEffect(external) {
         when {
-            external.sharedText != null -> nav.switchTab("shein")
+            external.sharedText != null -> nav.navigate("shein_cart") { launchSingleTop = true }
             external.route != null -> nav.navigate(external.route)
         }
         if (external.route != null || external.sharedText != null) onExternalConsumed()
@@ -152,6 +152,9 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                 SearchScreen(e.arguments?.getString("q"), onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
             }
             composable("shein") {
+                com.dealsmasr.app.ui.shein.SheinStoreScreen(onCart = { nav.navigate("shein_cart") }, onCheckout = { nav.navigate("checkout") })
+            }
+            composable("shein_cart") {
                 SheinScreen(sharedText, onSharedConsumed, onCheckout = { nav.navigate("checkout") }, onOrders = { nav.navigate("orders") })
             }
             composable("orders") { OrdersScreen(onOrder = { nav.navigate("order/$it") }) }

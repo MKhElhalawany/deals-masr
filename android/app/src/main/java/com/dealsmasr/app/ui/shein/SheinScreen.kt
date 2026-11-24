@@ -150,7 +150,7 @@ class SheinViewModel(private val repo: SheinRepository, settings: SettingsStore)
     fun retry(item: CartItemEntity) = repo.retry(item)
 }
 
-const val SHEIN_SLOGAN = "خصومات تصل لـ 70% · منتجات SHEIN بدون جمارك والتوصيل لحد باب البيت"
+const val SHEIN_SLOGAN = "عروض مصر بتوفرلك منتجات شي إن لحد باب بيتك · 0 جمارك · 0 مخاطرة · أسرع وقت · خصومات لحد 80%"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -328,10 +328,12 @@ fun BreakdownRows(
         Line("أدمن: بعد التحويل (× ${cfg.sarToEgp.toPlainString()})", Money.egp(converted))
         Line("أدمن: إضافة $extraPct%", Money.egp(extra))
     }
-    Line("سعر المنتجات", Money.egp(subtotal))
-    Line("التوصيل لحد باب البيت", Money.egp(fee))
-    HorizontalDivider(Modifier.padding(vertical = 4.dp))
-    Line("الإجمالي المطلوب", Money.egp(total), bold = true)
+    if (fee.signum() != 0) {
+        Line("سعر المنتجات", Money.egp(subtotal))
+        Line("التوصيل لحد باب البيت", Money.egp(fee))
+        HorizontalDivider(Modifier.padding(vertical = 4.dp))
+    }
+    Line("هنوصلهولك لحد باب بيتك بـ", Money.egp(total), bold = true)
 }
 
 @Composable

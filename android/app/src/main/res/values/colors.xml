@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#FFF7F3EA</color>
-    <color name="brand">#FF12357A</color>
-    <color name="ic_bg">#FF0E2A5C</color>
-    <color name="gold">#FFC9971C</color>
+    <color name="bg">#FFFAF7F1</color>
+    <color name="brand">#FF0E1B3D</color>
+    <color name="ic_bg">#FF0E1B3D</color>
+    <color name="gold">#FFC8A45D</color>
 </resources>

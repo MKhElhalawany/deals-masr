@@ -33,20 +33,22 @@ class CoreLogicTest {
 
     @Test fun sheinSpecExample() {
         val b = SheinPricing.order(listOf(BigDecimal("100") to 1), SheinPricingConfig())
-        assertEquals(BigDecimal("1350.00"), b.convertedEgp)
-        assertEquals(BigDecimal("270.00"), b.extraEgp)
-        assertEquals(BigDecimal("1620.00"), b.subtotalEgp)
-        assertEquals(BigDecimal("130"), b.deliveryFeeEgp)
-        assertEquals(BigDecimal("1750.00"), b.totalEgp)
+        assertEquals(BigDecimal("1450.00"), b.convertedEgp)
+        assertEquals(BigDecimal("290.00"), b.extraEgp)
+        assertEquals(BigDecimal("1740.00"), b.subtotalEgp)
+        assertEquals(0, b.deliveryFeeEgp.signum())
+        assertEquals(BigDecimal("1740.00"), b.totalEgp)
     }
 
     @Test fun sheinDeliveryOncePerOrder() {
         val b = SheinPricing.order(
             listOf(BigDecimal("100") to 1, BigDecimal("50") to 2, BigDecimal("19.99") to 3), SheinPricingConfig()
         )
-        assertEquals(BigDecimal("130"), b.deliveryFeeEgp)
-        assertEquals(BigDecimal("4211.51"), b.subtotalEgp)
-        assertEquals(BigDecimal("4341.51"), b.totalEgp)
+        assertEquals(0, b.deliveryFeeEgp.signum())
+        assertEquals(BigDecimal("4523.48"), b.subtotalEgp)
+        assertEquals(BigDecimal("4523.48"), b.totalEgp)
+        val withFee = SheinPricing.order(listOf(BigDecimal("100") to 1, BigDecimal("50") to 2), SheinPricingConfig.of("14.5", "1.20", "130"))
+        assertEquals(BigDecimal("130"), withFee.deliveryFeeEgp)
         assertEquals(BigDecimal.ZERO, SheinPricing.order(emptyList(), SheinPricingConfig()).totalEgp)
         val custom = SheinPricingConfig.of("14", "1.1", "150")
         assertEquals(BigDecimal("304.00"), SheinPricing.order(listOf(BigDecimal("10") to 1), custom).totalEgp)
@@ -88,9 +90,9 @@ class CoreLogicTest {
                 listOf(SummaryItem("فستان", "https://sa.shein.com/x-p-1.html", null, "M", "أسود", null, 1, b.lines[0])),
                 b, millis(2026, 11, 21))
         )
-        assertTrue(text.contains("الإجمالي المطلوب: 1,750 ج.م"))
+        assertTrue(text.contains("الإجمالي المطلوب: 1,740 ج.م"))
         assertTrue(text.contains("المقاس: M | اللون: أسود | الكمية: 1"))
-        assertTrue(text.contains("التوصيل: 130 ج.م"))
+        assertTrue(text.contains("التوصيل: مجاني"))
     }
 
     @Test fun sorting() {
