@@ -14,7 +14,13 @@ import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.ReceiptLong
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.ShoppingBag
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -74,6 +80,10 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
     val entry by nav.currentBackStackEntryAsState()
     val current = entry?.destination?.route?.substringBefore("?")
 
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    fun fromDrawer(route: String) { scope.launch { drawer.close() }; nav.navigate(route) { launchSingleTop = true } }
+
     LaunchedEffect(external) {
         when {
             external.sharedText != null -> nav.switchTab("shein")
@@ -82,6 +92,20 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
         if (external.route != null || external.sharedText != null) onExternalConsumed()
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        gesturesEnabled = drawer.isOpen || current == "home",
+        drawerContent = {
+            ModalDrawerSheet {
+                com.dealsmasr.app.ui.browse.AppDrawerContent(
+                    onCategory = { fromDrawer("category/${URLEncoder.encode(it, "UTF-8")}") },
+                    onCrazy = { fromDrawer("crazy") },
+                    onFavorites = { fromDrawer("favorites") },
+                    onSettings = { fromDrawer("settings") },
+                )
+            }
+        },
+    ) {
     Scaffold(
         bottomBar = {
             if (current in TABS.map { it.route }) {
@@ -107,8 +131,14 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                     onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") },
                     onFavorites = { nav.navigate("favorites") },
                     onSettings = { nav.navigate("settings") },
+                    onMenu = { scope.launch { drawer.open() } },
                 )
             }
+            composable("category/{c}") { e ->
+                com.dealsmasr.app.ui.browse.CategoryScreen(java.net.URLDecoder.decode(e.arguments?.getString("c").orEmpty(), "UTF-8"),
+                    onBack = { nav.popBackStack() }, onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
+            }
+            composable("crazy") { com.dealsmasr.app.ui.browse.CrazyDealsScreen(onBack = { nav.popBackStack() }) }
             composable("deals?tier={tier}", arguments = listOf(navArgument("tier") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
                 DealsScreen(
                     initialTier = e.arguments?.getString("tier")?.ifBlank { null },
@@ -141,5 +171,6 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                 })
             }
         }
+    }
     }
 }

@@ -81,7 +81,7 @@ jobs:
         with: { deno-version: v2.x }
       - name: Edge scanner tests (Deno)
         working-directory: supabase/functions/scan
-        run: deno test -A parsers_test.ts && deno check index.ts
+        run: deno test -A parsers_test.ts telegram_test.ts && deno check index.ts
       - name: App API tests (Deno)
         working-directory: supabase/functions/api
         run: deno test -A text_test.ts && deno check index.ts

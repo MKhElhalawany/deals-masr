@@ -23,6 +23,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -124,6 +125,7 @@ fun HomeScreen(
     onProduct: (String) -> Unit,
     onFavorites: () -> Unit,
     onSettings: () -> Unit,
+    onMenu: () -> Unit,
 ) {
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
@@ -139,8 +141,11 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.secondary.takeIf { androidx.compose.foundation.isSystemInDarkTheme() } ?: MaterialTheme.colorScheme.primary)
                     }
                 },
-                navigationIcon = { IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "الإعدادات") } },
-                actions = { IconButton(onClick = onFavorites) { Icon(Icons.Outlined.FavoriteBorder, "المفضلة") } },
+                navigationIcon = { IconButton(onClick = onMenu) { Icon(Icons.Outlined.Menu, "الأقسام") } },
+                actions = {
+                    IconButton(onClick = onFavorites) { Icon(Icons.Outlined.FavoriteBorder, "المفضلة") }
+                    IconButton(onClick = onSettings) { Icon(Icons.Outlined.Settings, "الإعدادات") }
+                },
             )
         },
     ) { pad ->

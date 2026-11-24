@@ -257,4 +257,22 @@ reset role;
 delete from public.phone_reports where user_id = 'a1111111-1111-4111-8111-111111111111';
 delete from public.scan_targets where url = 'https://www.jumia.com.eg/rls-phone-test/';
 
+-- tg_posts: readable by signed-in users, not writable by them, invisible to anon
+insert into public.tg_posts (channel, post_id, text) values ('rlstest', 1, 'hello');
+set local role authenticated;
+select set_config('request.jwt.claims', '{"sub":"a1111111-1111-4111-8111-111111111111","role":"authenticated"}', true);
+do $$ begin
+  if (select count(*) from public.tg_posts where channel = 'rlstest') <> 1 then raise exception 'tg_posts not readable'; end if;
+  begin insert into public.tg_posts (channel, post_id) values ('rlstest', 2); raise exception 'tg_posts writable';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+set local role anon;
+do $$ begin
+  begin perform 1 from public.tg_posts; raise exception 'tg_posts visible to anon';
+  exception when insufficient_privilege then null; end;
+end $$;
+reset role;
+delete from public.tg_posts where channel = 'rlstest';
+
 select 'ALL RLS TESTS PASSED';

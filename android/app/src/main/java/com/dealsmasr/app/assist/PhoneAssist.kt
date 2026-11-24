@@ -50,6 +50,7 @@ object PhoneAssist {
         var status = "error"
         var cards: List<JsonObject> = emptyList()
         var links: List<String> = emptyList()
+        var note = ""
         runCatching {
             http.newCall(Request.Builder().url(url).header("User-Agent", UA)
                 .header("Accept", "text/html,application/xhtml+xml").header("Accept-Language", "ar-EG,ar;q=0.9,en;q=0.8").build())
@@ -57,12 +58,16 @@ object PhoneAssist {
                     val html = r.body?.string().orEmpty()
                     val challenge = Regex("Just a moment|cf-chl|challenges\\.cloudflare|captcha", RegexOption.IGNORE_CASE).containsMatchIn(html.take(20000))
                     if (r.code in listOf(403, 429, 503) || challenge) status = "blocked"
-                    else if (r.isSuccessful) { cards = JumiaCards.extract(html); links = JumiaCards.links(html); status = "ok" }
+                    else if (r.isSuccessful) {
+                        cards = JumiaCards.extract(html).ifEmpty { JumiaCards.fromStoreJson(html) }
+                        links = JumiaCards.links(html); status = "ok"
+                        if (cards.isEmpty()) note = JumiaCards.markers(html, r.code)
+                    } else note = "http=${r.code}"
                 }
         }.onFailure { Log.w(TAG, "fetch: ${it.message}") }
         runCatching {
             c.supabase.fn("api", buildJsonObject {
-                put("action", "phone_report"); put("target_id", id); put("status", status); put("ms", System.currentTimeMillis() - t0)
+                put("action", "phone_report"); put("target_id", id); put("status", status); put("ms", System.currentTimeMillis() - t0); put("note", note)
                 put("items", buildJsonArray { cards.forEach { add(it) } })
                 put("links", buildJsonArray { links.forEach { add(kotlinx.serialization.json.JsonPrimitive(it)) } })
             })
@@ -93,6 +98,34 @@ object JumiaCards {
             attr(a, "data-src")?.let { put("image_url", it) }
         }
     }.toList()
+
+    /** Fallback: the product list the page embeds as JSON (sku, name, url, image, rawPrice/rawOldPrice, rating). */
+    fun fromStoreJson(html: String): List<JsonObject> {
+        val starts = Regex(""""sku"\s*:\s*"([A-Z0-9]{8,40})"""").findAll(html).toList()
+        return starts.mapIndexedNotNull { i, m ->
+            val chunk = html.substring(m.range.first, minOf(starts.getOrNull(i + 1)?.range?.first ?: html.length, m.range.first + 6000))
+            fun s(k: String) = Regex(""""$k"\s*:\s*"((?:[^"\\]|\\.){1,400})"""").find(chunk)?.groupValues?.get(1)?.replace("\\/", "/")
+            fun n(k: String) = Regex(""""$k"\s*:\s*"?(\d+(?:\.\d+)?)""").find(chunk)?.groupValues?.get(1)?.toDoubleOrNull()
+            val price = n("rawPrice") ?: return@mapIndexedNotNull null
+            val old = n("rawOldPrice") ?: return@mapIndexedNotNull null
+            val url = s("url")?.takeIf { it.startsWith("/") && it.endsWith(".html") } ?: return@mapIndexedNotNull null
+            val name = s("displayName") ?: s("name") ?: return@mapIndexedNotNull null
+            if (old <= price) return@mapIndexedNotNull null
+            buildJsonObject {
+                put("sku", m.groupValues[1]); put("title", clean(name)); put("url", "https://www.jumia.com.eg$url")
+                put("price", price); put("old", old)
+                s("image")?.let { put("image_url", it) }; s("brand")?.let { put("brand", clean(it)) }
+                n("average")?.let { put("rating", it) }; n("totalRatings")?.let { put("rating_count", it) }
+            }
+        }.distinctBy { it["sku"].toString() }.take(80)
+    }
+
+    /** Why a 200 page gave nothing: counts of known markers only (no page content leaves the phone). */
+    fun markers(html: String, code: Int): String {
+        fun c(p: String) = Regex(p).findAll(html).count()
+        return "code=$code len=${html.length} prd=${c("<article class=\"prd")} prc=${c("class=\"prc\"")} old=${c("class=\"old\"")} " +
+            "sku=${c("\"sku\"")} raw=${c("rawPrice")} store=${c("__STORE__")} next=${c("__NEXT_DATA__")}"
+    }
 
     fun links(html: String): List<String> = Regex("""href="(/[a-z0-9-]+/)"""").findAll(html).map { it.groupValues[1] }.distinct().take(60).toList()
 }

@@ -78,6 +78,8 @@ data class DealDto(
     val history: List<PricePointDto> = emptyList(),
     /** lower price with coupons / bank offers shown by the store (a note; the deal price is currentPrice) */
     @SerialName("best_price") val bestPrice: Double? = null,
+    val brand: String? = null,
+    val seller: String? = null,
 ) : Sortable {
     /** true when the store showed a crossed-out price; false = "X% off or more" without an old price (Amazon) */
     val hasOriginal: Boolean get() = originalPrice > currentPrice

@@ -143,6 +143,9 @@ fun ProductScreen(id: String, onBack: () -> Unit) {
                     if (!d.active) Text("انتهى العرض", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
                 }
                 Text(d.title, style = MaterialTheme.typography.titleMedium)
+                listOfNotNull(d.brand?.let { "الماركة: $it" }, "البائع: ${d.seller ?: d.marketplaceName}").joinToString(" · ").let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 PriceBlock(d.currentPrice, d.originalPrice, d.savings, minPct = d.discountPct)
                 d.bestPrice?.takeIf { it < d.currentPrice }?.let { bp ->
                     Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {

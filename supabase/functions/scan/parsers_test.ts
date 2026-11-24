@@ -89,3 +89,9 @@ Deno.test("audit guard: inflated before-price", async () => {
   assertEquals(inflated({ id: "b", title: "toothpaste", store: "noon", current_price: 40, original_price: 300 }, 60), true);
   assertEquals(inflated({ id: "c", title: "iPhone", store: "noon", current_price: 40000, original_price: 52000 }, 55000), false);
 });
+Deno.test("noon: brand, rating, seller", async () => {
+  const { noonJson } = await import("./parsers.ts");
+  const html = `{offer_code:"x",sku:"Z0F84C40568EE2C420682Z",brand:"KIESLECT",name:"Watch",price:999,sale_price:599,url:"watch",product_rating:$R[1891]={best_rating:4.2,count:74,value:4.7},store_name:"noon"}`;
+  const [i] = noonJson(html);
+  assertEquals([i.brand, i.seller, i.rating, i.rating_count], ["KIESLECT", "نون", 4.7, 74]);
+});

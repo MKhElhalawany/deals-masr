@@ -27,6 +27,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -72,7 +73,7 @@ class DealsRepository(
     private var lastSyncIso: String? = null
     private var lastFullSync = 0L
     private var syncLoaded = false
-    private val cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,deal_pct,best_price,rating,rating_count,active,deal_since,last_checked,updated_at"
+    private val cols = "id,store_id,title,url,image_url,category,original_price,current_price,discount_pct,deal_pct,best_price,rating,rating_count,brand,seller,active,deal_since,last_checked,updated_at"
 
     private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
     private fun epoch(iso: String?): Long = iso?.let { runCatching { OffsetDateTime.parse(it).toEpochSecond() }.getOrNull() } ?: 0L
@@ -89,7 +90,7 @@ class DealsRepository(
             category = o.str("category"), rating = o.num("rating"), ratingCount = (o["rating_count"] as? JsonPrimitive)?.intOrNull,
             originalPrice = orig, currentPrice = cur, discountPct = o.num("deal_pct") ?: o.num("discount_pct") ?: 0.0,
             savings = if (orig > cur) Math.round((orig - cur) * 100) / 100.0 else 0.0,
-            bestPrice = o.num("best_price"),
+            bestPrice = o.num("best_price"), brand = o.str("brand"), seller = o.str("seller"),
             dealSince = epoch(o.str("deal_since")), lastChecked = epoch(o.str("last_checked")),
             active = (o["active"] as? JsonPrimitive)?.booleanOrNull ?: true,
         )
@@ -243,6 +244,23 @@ class DealsRepository(
         }.getOrDefault(emptyList())
         return d.copy(history = hist)
     }
+
+    /** Deals of one side-menu category ("main" or "main/sub"), straight from the server (always current). */
+    suspend fun categoryDeals(category: String, page: Int = 0): List<DealDto> {
+        val f = if ('/' in category) "category=eq.${enc(category)}" else "category=like.${enc("$category/*")}"
+        return rows(supabase.select("deals", "select=$cols&active=eq.true&$f&order=deal_pct.desc.nullslast&limit=60&offset=${page * 60}"))
+            .map { toDeal(it) }
+    }
+
+    data class TgPost(val id: Long, val text: String, val url: String?, val imageUrl: String?, val price: Double?, val oldPrice: Double?, val postedAt: Long)
+
+    /** "عروض مجنونة": posts of the channel the server follows, newest first. */
+    suspend fun crazyPosts(beforeId: Long? = null): List<TgPost> =
+        rows(supabase.select("tg_posts", "select=post_id,text,url,image_url,price,old_price,posted_at" +
+            (beforeId?.let { "&post_id=lt.$it" } ?: "") + "&order=post_id.desc&limit=40")).map {
+            TgPost((it["post_id"] as? JsonPrimitive)?.longOrNull ?: 0, it.str("text").orEmpty(), it.str("url"), it.str("image_url"),
+                it.num("price"), it.num("old_price"), epoch(it.str("posted_at")))
+        }
 
     /** Health of the server worker per store (admin screen). */
     suspend fun marketplaces(): List<MarketplaceDto> =

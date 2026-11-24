@@ -156,6 +156,7 @@ create trigger call_scan after insert or update of status on public.orders for e
 
     # Phase 0: once a day (03:17 Cairo = 01:17 UTC) price history older than 90 days → one row per product per day
     S.sql(ref, "select cron.schedule('audit-deals', '*/2 * * * *', $c$select app_private.call_scan('{\"job\":\"audit\"}'::jsonb)$c$)")
+    S.sql(ref, "select cron.schedule('telegram-deals-me', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"telegram\",\"channel\":\"deals_me\"}'::jsonb)$c$)")
     S.sql(ref, "select cron.schedule('compact-price-history', '17 1 * * *', $c$select public.compact_price_history(90)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []
     print("cron jobs:", ", ".join(f"{j['jobname']} ({j['schedule']})" for j in jobs))

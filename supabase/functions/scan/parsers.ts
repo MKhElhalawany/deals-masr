@@ -7,6 +7,7 @@ export type Item = {
   current_price: number; original_price: number | null; rating?: number | null; rating_count?: number | null;
   min_pct?: number;      // Amazon: listing guarantees "X% off or more" but shows no old price
   best_price?: number;   // lower price with coupons / offers (shown as a note)
+  brand?: string | null; seller?: string | null;
 };
 /** ids of products seen on a page WITHOUT a discount (their old deals are removed at once) */
 export let lastNoDeal: string[] = [];
@@ -133,6 +134,16 @@ function bestPrice(chunk: string, sale: number): number | undefined {
 }
 
 /** noon's server-rendered product list ("hits": objects with sku, name, price, sale_price, url, image_url). */
+/** brand, product rating and seller from one Noon hit (fields are optional on the page) */
+function noonExtras(chunk: string) {
+  const rate = chunk.match(/product_rating"?\s*:\s*(?:\$R\[\d+\]\s*=\s*)?\{([^}]*)\}/)?.[1] ?? "";
+  const value = Number(rate.match(/value"?\s*:\s*([0-9.]+)/)?.[1]), count = Number(rate.match(/count"?\s*:\s*([0-9]+)/)?.[1]);
+  const brand = chunk.match(/[{,]\s*"?brand"?\s*:\s*"([^"\\]{1,60})"/)?.[1] ?? null;
+  const store = chunk.match(/[{,]\s*"?store_name"?\s*:\s*"([^"\\]{1,60})"/)?.[1] ?? null;
+  return { brand, seller: store ? (store.toLowerCase() === "noon" ? "نون" : store) : null,
+    rating: value > 0 && value <= 5 ? value : null, rating_count: count > 0 ? count : null };
+}
+
 export function noonJson(html: string): Item[] {
   const out = new Map<string, Item>();
   const noDeal: string[] = [];
@@ -157,7 +168,7 @@ export function noonJson(html: string): Item[] {
     const slug = str(chunk, "url") ?? "product";
     const img = str(chunk, "image_url") ?? ((k) => (k ? `https://f.nooncdn.com/p/${k}.jpg` : null))(str(chunk, "image_key"));
     out.set(sku, { id: `noon:${sku}`, store: "noon", title: name, url: `https://www.noon.com/egypt-en/${slug}/${sku}/p/`,
-      image_url: img, current_price: sale, original_price: price, best_price: bestPrice(chunk, sale) });
+      image_url: img, current_price: sale, original_price: price, best_price: bestPrice(chunk, sale), ...noonExtras(chunk) });
   }
   lastNoDeal = noDeal;
   return [...out.values()];

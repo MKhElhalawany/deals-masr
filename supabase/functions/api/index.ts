@@ -208,7 +208,10 @@ async function phoneReport(b: any, uid: string) {
       if (!(price >= 5) || !(old > price) || (old - price) / old > 0.9 || old > 5_000_000) continue;
       const img = String(it.image_url ?? "");
       items.push({ id: `jumia:${sku}`, store: "jumia", title: String(it.title ?? "").slice(0, 300), url: url.split("#")[0],
-        image_url: /^https:\/\/[a-z0-9.-]*jumia\.is\//.test(img) ? img : null, current_price: price, original_price: old });
+        image_url: /^https:\/\/[a-z0-9.-]*jumia\.is\//.test(img) ? img : null, current_price: price, original_price: old,
+        brand: typeof it.brand === "string" ? it.brand.slice(0, 60) : null,
+        rating: Number(it.rating) > 0 && Number(it.rating) <= 5 ? Number(it.rating) : null,
+        rating_count: Number(it.rating_count) > 0 ? Math.floor(Number(it.rating_count)) : null });
     }
     if (items.length) {
       const r = await rest("POST", "rpc/ingest_deals", { p_items: items, p_min_pct: 10 });
@@ -223,7 +226,8 @@ async function phoneReport(b: any, uid: string) {
     }
   }
   await rest("POST", "rpc/finish_target", { p_id: tid, p_status: status, p_items: items.length, p_deals: saved, p_new: events, p_fingerprint: null, p_ms: Number(b.ms) || null });
-  await rest("PATCH", `phone_reports?id=eq.${claim.id}`, { status, items: items.length, saved }, "return=minimal");
+  await rest("PATCH", `phone_reports?id=eq.${claim.id}`, { status, items: items.length, saved,
+    note: `raw=${(b.items ?? []).length} ${String(b.note ?? "").replace(/[^\w=:;., -]/g, "").slice(0, 300)}` }, "return=minimal");
   await rest("POST", "scraper_status", [{ store: "jumia", ok: status === "ok", deals_seen: saved, last_run: new Date().toISOString(),
     message: status === "ok" ? `✓ (من موبايل) ${saved} عرض من ${items.length} · جديد/نزل: ${events} · صفحات جديدة: ${added}` : `⚠️ (من موبايل) ${status}` }],
     "return=minimal,resolution=merge-duplicates");

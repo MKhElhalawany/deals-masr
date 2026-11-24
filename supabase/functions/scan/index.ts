@@ -7,6 +7,7 @@ import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
 import { categoryLinks, fingerprint, nextPage, Robots } from "./discover.ts";
 import { audit } from "./audit.ts";
+import { parseTelegram } from "./telegram.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -346,6 +347,35 @@ async function probe(url: string) {
     linkCount: links.length, linkSample: links.filter((l) => !/\.(js|css|png|jpg|svg|ico|woff)/.test(l)).slice(0, 150) };
 }
 
+// ───────── owner's public Telegram channel → "عروض مجنونة" (latest page + one older page per run until the start)
+const TG_CHANNELS = new Set(["deals_me"]);
+let tgRobots: { at: number; ok: (u: string) => boolean } | null = null;
+async function runTelegram(channel: string) {
+  if (!TG_CHANNELS.has(channel)) return { error: "channel not allowed" };
+  if (!tgRobots || Date.now() - tgRobots.at > 86400_000) {
+    const r = await fetch("https://t.me/robots.txt", { signal: AbortSignal.timeout(15_000), headers: { "User-Agent": UAS[1] } });
+    const body = r.ok ? await r.text() : "";
+    if (!r.ok && !(r.status >= 400 && r.status < 500)) return { error: `robots ${r.status}` };   // RFC 9309: 4xx = no rules
+    const rb = new Robots(body);
+    tgRobots = { at: Date.now(), ok: (u) => rb.ok(u) };
+  }
+  const page = async (before?: number) => {
+    const url = `https://t.me/s/${channel}${before ? `?before=${before}` : ""}`;
+    if (!tgRobots!.ok(url)) return [];
+    const r = await fetch(url, { signal: AbortSignal.timeout(20_000), headers: { "User-Agent": UAS[1], "Accept-Language": "ar,en;q=0.8" } });
+    if (!r.ok) throw new Error(`t.me HTTP ${r.status}`);
+    return parseTelegram(await r.text(), channel);
+  };
+  const save = async (posts: any[]) => posts.length
+    ? rest("POST", "tg_posts?on_conflict=channel,post_id", posts.map((p) => ({ channel, ...p })), "return=minimal,resolution=merge-duplicates") : null;
+  const latest = await page();
+  await save(latest);
+  const oldest = (await select(`tg_posts?select=post_id&channel=eq.${channel}&order=post_id.asc&limit=1`))[0]?.post_id;
+  let older: any[] = [];
+  if (oldest && oldest > 1) { older = await page(oldest); await save(older.filter((p) => p.post_id < oldest)); }
+  return { latest: latest.length, older: older.length, oldest, withPrice: latest.filter((p) => p.price).length };
+}
+
 // ───────── AI audit: category for the side menu + hide deals with an inflated "before" price (free Gemini tier)
 async function runAudit(n: number) {
   const rows = await select(`deals?select=id,title,store,current_price,original_price&active=eq.true&audit_status=eq.unchecked&order=deal_pct.desc.nullslast&limit=${n}`);
@@ -369,6 +399,7 @@ Deno.serve(async (req) => {
     let out: unknown;
     if (body.job === "order") out = await runOrder(String(body.id));
     else if (body.job === "probe") out = await probe(String(body.url));
+    else if (body.job === "telegram") out = await runTelegram(String(body.channel ?? "deals_me"));
     else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 40));
     else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)
       const u = new URL(String(body.url));
