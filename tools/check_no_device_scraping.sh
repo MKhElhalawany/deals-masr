@@ -4,6 +4,8 @@
 set -u
 # Exception approved by the owner (2026-11-23): assist/PhoneAssist.kt lets a phone read ONE server-queued page per
 # minute (Wi-Fi, app open) for stores that block cloud servers. It contains no store URLs, no browser automation.
+# Second approval (2026-11-25, owner: "any solution, even the user's phone, for Jumia only"): assist/JumiaWebView.kt
+# opens one server-queued Jumia page in an invisible WebView to read its product grid. It is excluded below, Jumia only.
 cd "$(dirname "$0")/../android/app/src/main"
 patterns=(
   'org\.jsoup' 'Jsoup' 'android\.webkit\.WebView' 'evaluateJavascript' 'PageFetcher' 'WebFetcher' 'SheinPricer'
@@ -12,7 +14,7 @@ patterns=(
 )
 fail=0
 for p in "${patterns[@]}"; do
-  if hits=$(grep -rnE "$p" . 2>/dev/null); then
+  if hits=$(grep -rnE "$p" . 2>/dev/null | grep -v '^\./java/com/dealsmasr/app/assist/JumiaWebView\.kt:'); then
     echo "::error::Device-side scraping is not allowed (pattern '$p'):"; echo "$hits"; fail=1
   fi
 done
