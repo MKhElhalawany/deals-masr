@@ -97,17 +97,15 @@ def main():
         r = probe(store, f"{origin}/robots.txt", None, "robots.txt")
         return r, Robots(r.get("robots") if r and r.get("status") == 200 else None)
 
-    # ── Probe 3 (run once): new stores Raneen and B.TECH — robots.txt, homepage, one category page each (≤3 per store)
-    for store, origin in (("raneen", "https://www.raneen.com"), ("btech", "https://btech.com")):
+    # ── Probe 4 (run once): price-comparison sources + the owner's Telegram channel (≤3 requests each)
+    for store, origin, pages in (
+        ("pricena", "https://eg.pricena.com", ["https://eg.pricena.com/en/search?s=air+fryer"]),
+        ("yaoota", "https://yaoota.com", ["https://yaoota.com/en-eg/search/?q=air+fryer"]),
+        ("telegram", "https://t.me", ["https://t.me/s/deals_me"]),
+    ):
         _, rb = robots_of(store, origin)
-        for home in (f"{origin}/en/", f"{origin}/"):
-            h = probe(store, home, rb, "homepage")
-            if h and h.get("status") == 200:
-                break
-        links = (h or {}).get("linkSample", []) if h else []
-        cat = next((l for l in links if l.count("/") >= 2 and not any(w in l for w in ("customer", "checkout", "cart", "account", "login", "wishlist", "search", ".html#"))), None)
-        if cat:
-            probe(store, origin + cat, rb, "category page from homepage")
+        for u in pages:
+            probe(store, u, rb, "page")
 
     # report
     REPORT.append("### 🔎 فحص المتاجر لمرة واحدة (من سيرفر Supabase، ≤5 طلبات لكل متجر، 4 ث بين الطلبات)")

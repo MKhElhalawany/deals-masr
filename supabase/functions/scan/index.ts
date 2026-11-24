@@ -306,7 +306,7 @@ async function runOrder(id: string) {
 // ───────── one-time store probe (Phase 0): ONE plain request per call, allowlisted hosts only, no retries,
 // no cookies, no challenge solving. Returns what the page offers, not the page.
 const PROBE_HOSTS = ["www.amazon.eg", "www.noon.com", "www.jumia.com.eg", "www.defacto.com", "defacto.com", "www.lcwaikiki.eg",
-  "lcwaikiki.eg", "townteam.com", "www.townteam.com", "www.townteam.com.eg", "townteam.com.eg", "www.raneen.com", "raneen.com", "btech.com", "www.btech.com"];
+  "lcwaikiki.eg", "townteam.com", "www.townteam.com", "www.townteam.com.eg", "townteam.com.eg", "www.raneen.com", "raneen.com", "btech.com", "www.btech.com", "eg.pricena.com", "yaoota.com", "t.me"];
 async function probe(url: string) {
   const u = new URL(url);
   if (!PROBE_HOSTS.includes(u.hostname)) return { error: "host not allowed" };
