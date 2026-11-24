@@ -50,7 +50,13 @@ export function parseAmazon(html: string): [Item[], number] {
   for (const c of cards) {
     const asin = c.getAttribute("data-asin");
     const h2 = c.querySelector("h2");
-    const title = ((h2?.getAttribute("aria-label")) || txt(h2)).trim();
+    let title = ((h2?.getAttribute("aria-label")) || txt(h2)).trim();
+    // newer cards put only the brand in the first <h2>; the full name is in the title block / image alt
+    if (title.length < 20) {
+      const full = [txt(c.querySelector('[data-cy="title-recipe"]')), c.querySelector("img.s-image")?.getAttribute("alt") ?? ""]
+        .map((t: string) => t.replace(/\s+/g, " ").trim()).find((t: string) => t.length > title.length + 5);
+      if (full) title = full.replace(/^Sponsored Ad - /i, "");
+    }
     const cur = price(txt([...c.querySelectorAll(".a-price .a-offscreen")].find((e: any) => !e.parentElement?.classList.contains("a-text-price"))));
     const old = price(txt(c.querySelector(".a-price.a-text-price .a-offscreen"))) ?? price(txt(c.querySelector('[data-a-strike="true"] .a-offscreen')));
     if (asin && title && cur && !old) {

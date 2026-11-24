@@ -397,9 +397,9 @@ async function runCompare(q: string) {
 
 // ───────── AI audit: category for the side menu + hide deals with an inflated "before" price (free Gemini tier)
 async function runAudit(n: number) {
-  const rows = await select(`deals?select=id,title,store,current_price,original_price&active=eq.true&audit_status=eq.unchecked&order=deal_pct.desc.nullslast&limit=${n}`);
+  const rows = await select(`deals?select=id,title,store_id,current_price,original_price&active=eq.true&audit_status=eq.unchecked&order=deal_pct.desc.nullslast&limit=${n}`);
   if (!rows.length) return { audited: 0 };
-  const res = await audit(rows.map((r: any) => ({ id: r.id, title: r.title ?? "", store: r.store,
+  const res = await audit(rows.map((r: any) => ({ id: r.id, title: r.title ?? "", store: r.store_id,
     current_price: Number(r.current_price), original_price: r.original_price == null ? null : Number(r.original_price) })));
   if (!res) return { audited: 0, error: "gemini unavailable" };
   return { audited: res.length, result: await rest("POST", "rpc/apply_audit", { p_rows: res }, "return=representation") };
