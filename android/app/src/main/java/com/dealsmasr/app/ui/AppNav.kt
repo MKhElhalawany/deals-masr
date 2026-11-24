@@ -99,7 +99,7 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
             ModalDrawerSheet {
                 com.dealsmasr.app.ui.browse.AppDrawerContent(
                     onCategory = { fromDrawer("category/${URLEncoder.encode(it, "UTF-8")}") },
-                    onCrazy = { fromDrawer("crazy") },
+                    onCrazy = { fromDrawer("crazy?f=$it") },
                     onFavorites = { fromDrawer("favorites") },
                     onSettings = { fromDrawer("settings") },
                 )
@@ -138,7 +138,9 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                 com.dealsmasr.app.ui.browse.CategoryScreen(java.net.URLDecoder.decode(e.arguments?.getString("c").orEmpty(), "UTF-8"),
                     onBack = { nav.popBackStack() }, onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
             }
-            composable("crazy") { com.dealsmasr.app.ui.browse.CrazyDealsScreen(onBack = { nav.popBackStack() }) }
+            composable("crazy?f={f}", arguments = listOf(navArgument("f") { type = NavType.IntType; defaultValue = 0 })) { e ->
+                com.dealsmasr.app.ui.browse.CrazyDealsScreen(e.arguments?.getInt("f") ?: 0, onBack = { nav.popBackStack() })
+            }
             composable("deals?tier={tier}", arguments = listOf(navArgument("tier") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
                 DealsScreen(
                     initialTier = e.arguments?.getString("tier")?.ifBlank { null },

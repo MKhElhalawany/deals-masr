@@ -262,9 +262,11 @@ class DealsRepository(
     data class TgPost(val id: Long, val text: String, val url: String?, val imageUrl: String?, val price: Double?, val oldPrice: Double?, val postedAt: Long)
 
     /** "عروض مجنونة": posts of the channel the server follows, newest first. */
-    suspend fun crazyPosts(beforeId: Long? = null): List<TgPost> =
+    suspend fun crazyPosts(beforeId: Long? = null, keywords: List<String> = emptyList()): List<TgPost> =
         rows(supabase.select("tg_posts", "select=post_id,text,url,image_url,price,old_price,posted_at" +
-            (beforeId?.let { "&post_id=lt.$it" } ?: "") + "&order=post_id.desc&limit=40")).map {
+            (beforeId?.let { "&post_id=lt.$it" } ?: "") +
+            (if (keywords.isEmpty()) "" else "&or=(" + keywords.joinToString(",") { "text.ilike.*${enc(it)}*" } + ")") +
+            "&order=post_id.desc&limit=40")).map {
             TgPost((it["post_id"] as? JsonPrimitive)?.longOrNull ?: 0, it.str("text").orEmpty(), it.str("url"), it.str("image_url"),
                 it.num("price"), it.num("old_price"), epoch(it.str("posted_at")))
         }

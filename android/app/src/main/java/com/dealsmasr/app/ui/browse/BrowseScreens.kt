@@ -84,13 +84,19 @@ val CATEGORY_MENU: List<Pair<String, List<String>>> = listOf(
 )
 
 @Composable
-fun AppDrawerContent(onCategory: (String) -> Unit, onCrazy: () -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
+fun AppDrawerContent(onCategory: (String) -> Unit, onCrazy: (Int) -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
         Text("الأقسام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black,
             color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-        NavigationDrawerItem(label = { Text("🔥 عروض مجنونة") }, selected = false, onClick = onCrazy,
+        NavigationDrawerItem(label = { Text("🔥 عروض مجنونة") }, selected = false, onClick = { onCrazy(0) },
             icon = { Icon(Icons.Outlined.Bolt, null) }, modifier = Modifier.padding(horizontal = 12.dp))
+        NavigationDrawerItem(label = { Text("🎟️ كوبونات") }, selected = false, onClick = { onCrazy(1) },
+            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
+        NavigationDrawerItem(label = { Text("1+1 اشتري واحد والتاني هدية") }, selected = false, onClick = { onCrazy(2) },
+            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
+        NavigationDrawerItem(label = { Text("🍔 مطاعم وأكل") }, selected = false, onClick = { onCrazy(3) },
+            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
         HorizontalDivider(Modifier.padding(vertical = 8.dp))
         CATEGORY_MENU.forEach { (main, subs) ->
             NavigationDrawerItem(
@@ -159,28 +165,45 @@ fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> 
     }
 }
 
+/** Filters over the channel posts (the channel itself is the source; codes can't be test-used without ordering). */
+val CRAZY_FILTERS: List<Pair<String, List<String>>> = listOf(
+    "الكل" to emptyList(),
+    "🎟️ كوبونات" to listOf("كوبون", "كود", "code", "coupon", "promo"),
+    "1+1" to listOf("1+1", "١+١", "اشتري 1", "اشتري واحد", "buy 1", "buy one", "الثانية مجان", "التانية مجان", "الثاني مجان"),
+    "🍔 مطاعم وأكل" to listOf("مطعم", "طلبات", "talabat", "بريدفاست", "breadfast", "بيتزا", "برجر", "وجبة", "كنتاكي", "ماكدونالدز", "مشويات", "فطار"),
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CrazyDealsScreen(onBack: () -> Unit) {
+fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
     val c = appContainer()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val posts = remember { mutableStateListOf<DealsRepository.TgPost>() }
-    var loading by remember { mutableStateOf(true) }
-    var end by remember { mutableStateOf(false) }
-    var error by remember { mutableStateOf<String?>(null) }
+    var filter by rememberSaveable { mutableStateOf(initialFilter.coerceIn(0, CRAZY_FILTERS.size - 1)) }
+    val posts = remember(filter) { mutableStateListOf<DealsRepository.TgPost>() }
+    var loading by remember(filter) { mutableStateOf(true) }
+    var end by remember(filter) { mutableStateOf(false) }
+    var error by remember(filter) { mutableStateOf<String?>(null) }
     suspend fun load() {
         loading = true; error = null
-        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.id) }
+        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.id, CRAZY_FILTERS[filter].second) }
             .onSuccess { posts.addAll(it); end = it.size < 40 }
             .onFailure { error = "مقدرناش نجيب العروض، اتأكد من النت" }
         loading = false
     }
-    LaunchedEffect(Unit) { load() }
+    LaunchedEffect(filter) { load() }
     Scaffold(topBar = {
         TopAppBar(title = { Text("🔥 عروض مجنونة") },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
-    }) { pad ->
+    }) { pad0 ->
+      Column(Modifier.padding(pad0)) {
+        androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(CRAZY_FILTERS.size) { i ->
+                androidx.compose.material3.FilterChip(selected = filter == i, onClick = { filter = i }, label = { Text(CRAZY_FILTERS[i].first) })
+            }
+        }
+        val pad = PaddingValues(0.dp)
         when {
             posts.isEmpty() && loading -> Column(Modifier.padding(pad)) { SkeletonGrid() }
             posts.isEmpty() && error != null -> ErrorState(error!!, { scope.launch { load() } }, Modifier.padding(pad))
@@ -211,5 +234,6 @@ fun CrazyDealsScreen(onBack: () -> Unit) {
                 }
             }
         }
+      }
     }
 }
