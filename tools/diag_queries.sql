@@ -8,3 +8,5 @@ select status, count(*), sum(items) as items, sum(saved) as saved, max(note) as 
 select count(*) as posts, count(price) as with_price, min(post_id), max(post_id), max(posted_at) from public.tg_posts;
 select audit_status, count(*) from public.deals where active or audit_status = 'fake' group by 1;
 select category, count(*) from public.deals where active group by 1 order by 2 desc limit 40;
+select left(title, 60) as t, current_price as p, original_price as o, typical_low as lo, typical_high as hi, audit_note from public.deals where audit_status = 'fake' order by audited_at desc limit 25;
+select left(title, 50) as t, current_price as p, original_price as o, typical_high as hi, category from public.deals where audit_status = 'ok' order by audited_at desc limit 12;
