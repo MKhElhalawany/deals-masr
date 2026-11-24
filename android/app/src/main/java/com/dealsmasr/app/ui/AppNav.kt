@@ -57,10 +57,15 @@ private val TABS = listOf(
 /** Navigation requests coming from outside Compose (share sheet, notification taps). */
 data class ExternalNav(val route: String? = null, val sharedText: String? = null)
 
-private fun NavHostController.switchTab(route: String) = navigate(route) {
-    popUpTo(graph.findStartDestination().id) { saveState = true }
-    launchSingleTop = true
-    restoreState = true
+private fun NavHostController.switchTab(route: String) {
+    val start = graph.findStartDestination().id
+    // Home is the start screen: just drop everything above it (restoring a saved state could bring the old tab back)
+    if (route == "home") { if (!popBackStack(start, inclusive = false)) navigate("home") { launchSingleTop = true }; return }
+    navigate(route) {
+        popUpTo(start) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
+    }
 }
 
 @Composable

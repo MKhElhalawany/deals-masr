@@ -83,3 +83,9 @@ Deno.test("noon: coupon price + products without discount", async () => {
   assertEquals([items.length, items[0].current_price, items[0].best_price], [1, 996, 697.2]);
   assertEquals(m.lastNoDeal, ["noon:ZB"]);
 });
+Deno.test("audit guard: inflated before-price", async () => {
+  const { inflated } = await import("./audit.ts");
+  assertEquals(inflated({ id: "a", title: "toothpaste", store: "noon", current_price: 28, original_price: 1000 }, null), true);
+  assertEquals(inflated({ id: "b", title: "toothpaste", store: "noon", current_price: 40, original_price: 300 }, 60), true);
+  assertEquals(inflated({ id: "c", title: "iPhone", store: "noon", current_price: 40000, original_price: 52000 }, 55000), false);
+});

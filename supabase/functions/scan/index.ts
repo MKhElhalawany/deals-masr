@@ -6,6 +6,7 @@ const checkedAsins = new Map<string, number>();   // product pages already check
 import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
 import { categoryLinks, fingerprint, nextPage, Robots } from "./discover.ts";
+import { audit } from "./audit.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -345,6 +346,16 @@ async function probe(url: string) {
     linkCount: links.length, linkSample: links.filter((l) => !/\.(js|css|png|jpg|svg|ico|woff)/.test(l)).slice(0, 150) };
 }
 
+// ───────── AI audit: category for the side menu + hide deals with an inflated "before" price (free Gemini tier)
+async function runAudit(n: number) {
+  const rows = await select(`deals?select=id,title,store,current_price,original_price&active=eq.true&audit_status=eq.unchecked&order=deal_pct.desc.nullslast&limit=${n}`);
+  if (!rows.length) return { audited: 0 };
+  const res = await audit(rows.map((r: any) => ({ id: r.id, title: r.title ?? "", store: r.store,
+    current_price: Number(r.current_price), original_price: r.original_price == null ? null : Number(r.original_price) })));
+  if (!res) return { audited: 0, error: "gemini unavailable" };
+  return { audited: res.length, result: await rest("POST", "rpc/apply_audit", { p_rows: res }, "return=representation") };
+}
+
 function sameSecret(a: string, b: string) {
   if (!a || a.length !== b.length) return false;
   let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
@@ -358,6 +369,7 @@ Deno.serve(async (req) => {
     let out: unknown;
     if (body.job === "order") out = await runOrder(String(body.id));
     else if (body.job === "probe") out = await probe(String(body.url));
+    else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 40));
     else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)
       const u = new URL(String(body.url));
       if (!PROBE_HOSTS.includes(u.hostname)) out = { error: "host not allowed" };

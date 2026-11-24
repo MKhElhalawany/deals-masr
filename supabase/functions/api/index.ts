@@ -2,7 +2,7 @@
 //   POST {action:"search", q, stores?, min_pct?, min_price?, max_price?, sort?, page?}
 //   POST {action:"verify", deal_id}            → "يستاهل ولا لأ؟"
 //   POST {action:"chat", messages:[{role,text}]} → shopping assistant (Gemini free tier, with our real deals)
-import { gemini, geminiConfigured, type Turn } from "./gemini.ts";
+import { gemini, geminiConfigured, type Turn } from "../_shared/gemini.ts";
 import { dictTranslate, hasArabic, maxPriceOf, normalize, similarity, titleTokens, words } from "./text.ts";
 import { Robots } from "../_shared/robots.ts";
 

@@ -106,7 +106,7 @@ fun DealsScreen(initialTier: String?, onProduct: (String) -> Unit, onSettings: (
             }
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item { FilterChip(selected = stores.isEmpty(), onClick = { stores = emptySet() }, label = { Text("كل المتاجر") }) }
-                items(STORES + ("talabat" to "طلبات")) { (id, name) ->
+                items(STORES) { (id, name) ->
                     FilterChip(selected = id in stores, onClick = { stores = if (id in stores) stores - id else stores + id },
                         label = { Text(name) })
                 }

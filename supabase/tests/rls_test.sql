@@ -196,6 +196,24 @@ set role service_role;
 select pg_temp.check(public.deactivate_seen_without_deal(array['noon:rls-ing-7']) = 1, 'deal seen without discount is removed');
 reset role;
 delete from public.deals where id like 'noon:rls-ing-%';
+-- deal audit: a fake "before" price hides the deal and keeps it hidden while the store keeps that price
+set role service_role;
+select public.ingest_deals('[{"id":"noon:rls-fake-1","store":"noon","title":"Toothpaste 100ml","url":"https://x/f","current_price":60,"original_price":1000,"brand":"X","category":"جمال وعناية/عناية شخصية"}]'::jsonb, 10);
+select pg_temp.check((public.apply_audit('[{"id":"noon:rls-fake-1","status":"fake","note":"سعر قبل الخصم مبالغ فيه","typical_low":25,"typical_high":60}]'::jsonb)->>'fake')::int = 1, 'audit marks fake');
+reset role;
+select pg_temp.check((select not active and audit_status = 'fake' and brand = 'X' from public.deals where id = 'noon:rls-fake-1'), 'fake deal hidden');
+set role service_role;
+select public.ingest_deals('[{"id":"noon:rls-fake-1","store":"noon","title":"Toothpaste 100ml","url":"https://x/f","current_price":58,"original_price":1000}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select not active from public.deals where id = 'noon:rls-fake-1'), 'same inflated before-price stays hidden');
+set role service_role;
+select public.ingest_deals('[{"id":"noon:rls-fake-1","store":"noon","title":"Toothpaste 100ml","url":"https://x/f","current_price":40,"original_price":60}]'::jsonb, 10);
+reset role;
+select pg_temp.check((select active and audit_status = 'unchecked' from public.deals where id = 'noon:rls-fake-1'), 'new before-price → shown and audited again');
+set role authenticated;
+select pg_temp.must_fail($$select public.apply_audit('[]'::jsonb)$$);
+reset role;
+delete from public.deals where id = 'noon:rls-fake-1';
 delete from public.deals where id like 'amazon:rls-ing-%';
 delete from public.alerts where query = 'rlsprobe phone';
 
