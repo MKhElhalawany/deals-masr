@@ -155,7 +155,7 @@ create trigger call_scan after insert or update of status on public.orders for e
     print("scan targets:", ", ".join(f"{r['store']} {r['n']}" for r in qstat))
 
     # Phase 0: once a day (03:17 Cairo = 01:17 UTC) price history older than 90 days → one row per product per day
-    S.sql(ref, "select cron.schedule('audit-deals', '*/2 * * * *', $c$select app_private.call_scan('{\"job\":\"audit\"}'::jsonb)$c$)")
+    S.sql(ref, "select cron.schedule('audit-deals', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"audit\"}'::jsonb)$c$)")
     S.sql(ref, "select cron.schedule('telegram-deals-me', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"telegram\",\"channel\":\"deals_me\"}'::jsonb)$c$)")
     S.sql(ref, "select cron.schedule('compact-price-history', '17 1 * * *', $c$select public.compact_price_history(90)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []
@@ -237,12 +237,16 @@ create trigger call_scan after insert or update of status on public.orders for e
             OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
     except Exception as e:
         OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
-    try:   # B.TECH product data sample (one request) — to build its reader
-        d = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret},
-                   json={"job": "debug_url", "url": "https://btech.com/en/collection/black-friday-offers"}).json()
-        print(f"::group::btech sample (HTTP {d.get('code')}, {d.get('length')} bytes, next {d.get('nextData')})\n{d.get('sample', d.get('error', ''))}\n::endgroup::")
-    except Exception as e:
-        print("btech sample failed", e)
+    for job in ({"job": "audit", "n": 5}, {"job": "compare", "q": "philips air fryer"}):   # health of the AI audit + live compare
+        try:
+            r = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json=job, timeout=90)
+            body = r.text
+            if job["job"] == "compare":
+                offers = r.json().get("offers", [])
+                body = f"{len(offers)} offers, e.g. " + json.dumps([[o["title"][:50], o["price"]] for o in offers[:4]], ensure_ascii=False)
+            print(f"::group::{job['job']} check (HTTP {r.status_code})\n{body[:1500]}\n::endgroup::")
+        except Exception as e:
+            print(job["job"], "check failed", e)
     dq = os.path.join(os.path.dirname(__file__), "diag_queries.sql")
     if os.path.exists(dq):
         print("::group::diagnostic queries (read-only)")

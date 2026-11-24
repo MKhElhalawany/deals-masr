@@ -33,13 +33,13 @@ export async function audit(items: AuditIn[]): Promise<AuditOut[] | null> {
   if (!items.length) return [];
   const g = await gemini(SYSTEM, [{ role: "user", text: JSON.stringify(items.map((i) => ({
     id: i.id, title: i.title.slice(0, 140), store: i.store, price: i.current_price, before: i.original_price }))) }],
-    { json: true, maxTokens: 4000, temperature: 0 });
+    { json: true, maxTokens: 8000, temperature: 0 });
   if (!g) return null;
-  let rows: any[] = [];
-  try { rows = JSON.parse(g.text); } catch { return null; }
-  if (!Array.isArray(rows)) return null;
+  let rows: any = [];
+  try { rows = JSON.parse(g.text); } catch { throw new Error(`audit: bad JSON from ${g.model}: ${g.text.slice(0, 200)} … ${g.text.slice(-120)}`); }
+  if (!Array.isArray(rows)) rows = Object.values(rows ?? {}).find(Array.isArray) ?? [];
   const byId = new Map(items.map((i) => [i.id, i]));
-  return rows.filter((r) => byId.has(String(r?.id))).map((r) => {
+  return (rows as any[]).filter((r: any) => byId.has(String(r?.id))).map((r: any) => {
     const i = byId.get(String(r.id))!;
     const lo = Number(r.typical_low) > 0 ? Number(r.typical_low) : null, hi = Number(r.typical_high) > 0 ? Number(r.typical_high) : null;
     const fake = r.fake === true || inflated(i, hi);

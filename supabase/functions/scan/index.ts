@@ -420,7 +420,7 @@ Deno.serve(async (req) => {
     else if (body.job === "probe") out = await probe(String(body.url));
     else if (body.job === "telegram") out = await runTelegram(String(body.channel ?? "deals_me"));
     else if (body.job === "compare") out = await runCompare(String(body.q ?? "").slice(0, 120));
-    else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 40));
+    else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 30));
     else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)
       const u = new URL(String(body.url));
       if (!PROBE_HOSTS.includes(u.hostname)) out = { error: "host not allowed" };
