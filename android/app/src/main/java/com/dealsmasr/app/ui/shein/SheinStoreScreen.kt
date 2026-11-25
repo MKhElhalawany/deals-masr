@@ -154,9 +154,10 @@ private val READ_JS = """
     for(var i=0;i<6&&t&&t.getAttribute;i++,t=t.parentElement){var c=String((t.className&&t.className.baseVal!==undefined)?t.className.baseVal:(t.className||''));
       if(/camera|image-?search|imgsearch|pic-?search|search-?img|photo-?search/i.test(c)||/camera|صورة/i.test(t.getAttribute('aria-label')||'')){
         e.preventDefault();e.stopPropagation();if(window.DM)DM.pickPhoto();return;}}},true);}
-  if(!document.getElementById('dm-hide')){var st=document.createElement('style');st.id='dm-hide';
-    st.textContent='[class*="price"],[class*="Price"],[class*="discount-label"],[class*="download-banner"],[class*="app-download"],[class*="open-app"]{visibility:hidden!important}';
-    (document.head||document.documentElement).appendChild(st);}
+  // hide only the small riyal price labels themselves (a CSS rule on "*price*" classes also hid whole result lists → white page)
+  document.querySelectorAll('[class*="price"],[class*="Price"],[class*="discount"]').forEach(function(e){
+    if(e.getAttribute('data-dmh'))return;var t=e.textContent||'';
+    if(t.length<40&&/\d/.test(t)&&!e.querySelector('img,a,ul,section')){e.style.visibility='hidden';e.setAttribute('data-dmh','1');}});
   var u=location.href, m=u.match(/-p-(\d{5,})/)||u.match(/goods_id=(\d{5,})/)||u.match(/\/goods\/(\d{5,})/);
   if(!m){var pe0=document.querySelector('[class*="price"]');return JSON.stringify({page:'list',cur:pe0?pe0.textContent.slice(0,30):''});}
   var gid=m[1];
@@ -269,7 +270,11 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
         scope.launch {
             c.shein.imageSearchQuery(uri).onSuccess { (q, ar) ->
                 message = "نتايج شبه الصورة" + (if (ar.isNotBlank()) ": $ar" else "")
-                web.loadUrl(searchUrl(q))
+                // search on the SHEIN site the user is on (same host and region prefix, e.g. m.shein.com/ar)
+                val js = "(function(){var h=location.hostname;if(!/shein\\.com${'$'}/.test(h))return 'no';" +
+                    "location.href=location.origin+((location.pathname.match(/^\\/[a-z]{2}(?=\\/)/)||[''])[0])+'/pdsearch/'+encodeURIComponent(" +
+                    c.api.json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(q)) + ")+'/';return 'ok';})()"
+                web.evaluateJavascript(js) { r -> if (!r.contains("ok")) web.loadUrl(searchUrl(q)) }
             }.onFailure { message = it.message ?: "معرفناش ندور بالصورة دي"; loading = false }
         }
     }
