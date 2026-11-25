@@ -82,7 +82,7 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
                     else Text("السلة غير جاهزة", color = MaterialTheme.colorScheme.error)
                 }
             }
-            Text("بعد التأكيد هيتفتح واتساب برسالة الطلب لفريقنا — اضغط إرسال. التوصيل خلال 25–${settings?.countdownDays ?: 35} يوم من تأكيد الطلب.",
+            Text("بعد التأكيد طلبك بيوصلنا على طول وهنكلمك واتساب. الدفع عند الاستلام، والتوصيل خلال 25–${settings?.countdownDays ?: 35} يوم من تأكيد الطلب.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Button(
@@ -91,10 +91,16 @@ fun CheckoutScreen(onBack: () -> Unit, onPlaced: (String) -> Unit) {
                     scope.launch {
                         runCatching { c.shein.submitOrder(name.trim(), phone.replace(" ", ""), address.trim(), notes.trim()) }
                             .onSuccess { order ->
-                                val images = c.shein.itemsOf(order).mapNotNull { it.localImagePath }
-                                // Images already uploaded to the backend are visible to the admin; attach only local-mode images.
-                                WhatsApp.sendOrder(ctx, order.whatsappText, settings?.whatsappNumber.orEmpty(),
-                                    if (order.synced) emptyList() else images)
+                                // the server sends the order to the owner's WhatsApp by itself (when set up);
+                                // otherwise (or if the order didn't reach the server) the customer's WhatsApp sends it
+                                val auto = order.synced && runCatching {
+                                    c.supabase.select("app_config", "select=value&key=eq.order_whatsapp_auto").contains("true")
+                                }.getOrDefault(false)
+                                if (!auto) {
+                                    val images = c.shein.itemsOf(order).mapNotNull { it.localImagePath }
+                                    WhatsApp.sendOrder(ctx, order.whatsappText, settings?.whatsappNumber.orEmpty(),
+                                        if (order.synced) emptyList() else images)
+                                }
                                 onPlaced(order.id)
                             }
                             .onFailure { error = it.userMessage() }

@@ -158,6 +158,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_CSE_KEY: ${{ secrets.GOOGLE_CSE_KEY }}
           GOOGLE_CSE_CX: ${{ secrets.GOOGLE_CSE_CX }}
+          CALLMEBOT_APIKEY: ${{ secrets.CALLMEBOT_APIKEY }}
+          OWNER_WHATSAPP: ${{ secrets.OWNER_WHATSAPP }}
         run: |
           pip install -q httpx
           python3 tools/edge_setup.py

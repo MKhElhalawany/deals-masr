@@ -107,6 +107,13 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.buildJsonArray
+import androidx.compose.material.icons.automirrored.outlined.HelpOutline
+import androidx.compose.material.icons.outlined.Groups
+import android.view.ViewGroup
+import android.content.MutableContextWrapper
 import java.net.URLEncoder
 
 private val AR_HEADERS = mapOf("Accept-Language" to "ar-SA,ar;q=0.9")   // SHEIN in Arabic
@@ -201,14 +208,48 @@ private fun parse(o: JsonObject): PageProduct? {
         o["retail"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0 }, !egp, s("size"), s("color"), s("needSize") == "true")
 }
 
-/** SHEIN's own camera (photo search) button → our photo search (SHEIN's needs its app / camera access). */
-private class PhotoBridge {
-    var onPick: () -> Unit = {}
-    @android.webkit.JavascriptInterface
-    fun pickPhoto() { android.os.Handler(android.os.Looper.getMainLooper()).post { onPick() } }
+private const val GROUP_LINK = "https://chat.whatsapp.com/BgvVPa3GyLbI8yuVyonmlM"
+
+/**
+ * One SHEIN browser for the whole app session: switching tabs and coming back shows the same page (no reload, no
+ * black screen). If Android kills the page's renderer, a fresh browser is created and the last page reopened.
+ */
+@SuppressLint("StaticFieldLeak")
+private object SheinWeb {
+    private var view: WebView? = null
+    private var ctxWrap: MutableContextWrapper? = null
+    var lastUrl: String = SHEIN_SA
+    val logs = ArrayList<Pair<String, String>>()   // kind to message (sent to our server for fixing problems)
+
+    @SuppressLint("SetJavaScriptEnabled")
+    fun get(activity: android.content.Context): WebView {
+        view?.let { ctxWrap?.baseContext = activity; return it }
+        val wrap = MutableContextWrapper(activity).also { ctxWrap = it }
+        CookieManager.getInstance().setAcceptCookie(true)
+        CookieManager.getInstance().setCookie("ar.shein.com", "currency=SAR; path=/")
+        return WebView(wrap).apply {
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.databaseEnabled = true
+            settings.textZoom = 100
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.mediaPlaybackRequiresUserGesture = false
+            settings.userAgentString = settings.userAgentString.replace("; wv)", ")").replace(Regex("Version/[\\d.]+ "), "")
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            setBackgroundColor(android.graphics.Color.WHITE)
+            loadUrl(lastUrl, AR_HEADERS)
+            view = this
+        }
+    }
+
+    fun reset() {
+        view?.let { (it.parent as? ViewGroup)?.removeView(it); runCatching { it.destroy() } }
+        view = null
+    }
+
+    fun log(kind: String, msg: String) = synchronized(logs) { if (logs.size < 40) logs += kind to msg.take(300) }
 }
 
-@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
@@ -218,235 +259,184 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     val settings by c.settings.settings.collectAsStateWithLifecycle(null)
     val cart by c.shein.cart.collectAsStateWithLifecycle(emptyList())
     val cfg = settings?.pricing ?: SheinPricingConfig()
-    var query by remember { mutableStateOf("") }
-    var link by remember { mutableStateOf("") }
-    var showLink by remember { mutableStateOf(false) }
-    var showHelp by rememberSaveable { mutableStateOf(true) }
     var loading by remember { mutableStateOf(false) }
     var product by remember { mutableStateOf<PageProduct?>(null) }
-    var sheet by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var pendingImage by remember { mutableStateOf<Uri?>(null) }
-    var otherCurrency by remember { mutableStateOf<String?>(null) }   // SHEIN opened on another GCC country
+    var otherCurrency by remember { mutableStateOf<String?>(null) }
+    var howTo by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var generation by remember { mutableStateOf(0) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
-    // SHEIN asking for a file (its own photo search) with no photo picked from our button → let the user choose one
+    // SHEIN asking for a photo (its own photo search) → the phone's photo picker
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         fileCallback?.onReceiveValue(uri?.let { arrayOf(it) }); fileCallback = null
     }
-    val bridge = remember { PhotoBridge() }
-    val web = remember {
-        CookieManager.getInstance().apply {
-            setAcceptCookie(true)
-            setCookie("ar.shein.com", "currency=SAR; path=/")
-        }
-        WebView(ctx).apply {
-            this.settings.javaScriptEnabled = true
-            this.settings.domStorageEnabled = true
-            this.settings.textZoom = 100
-            this.settings.javaScriptCanOpenWindowsAutomatically = true
-            this.settings.mediaPlaybackRequiresUserGesture = false
-            // behave exactly like Chrome on this phone (SHEIN changes/limits features inside "app" web views)
-            this.settings.userAgentString = this.settings.userAgentString.replace("; wv)", ")").replace(Regex("Version/[\\d.]+ "), "")
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)   // SHEIN's photo search talks to its other domains
-            val rewrites = HashMap<String, Int>()
+    val web = remember(generation) {
+        SheinWeb.get(ctx).apply {
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val u = request.url
                     val host = u.host ?: ""
                     if (u.scheme != "https" || !(host.endsWith("shein.com") || host.endsWith("shein.top"))) return true   // no app-store / deep links
                     val sa = toSaudi(u.toString())
-                    if (request.isForMainFrame && sa != u.toString() && (rewrites.merge(sa, 1, Int::plus) ?: 0) <= 2) {
-                        view.loadUrl(sa); return true   // keep the user on the Saudi store (riyal prices)
-                    }
+                    if (request.isForMainFrame && sa != u.toString()) { view.loadUrl(sa, AR_HEADERS); return true }
                     return false
                 }
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { loading = true }
-                override fun onPageFinished(view: WebView, url: String?) { loading = false }
+                override fun onPageFinished(view: WebView, url: String?) { loading = false; url?.let { SheinWeb.lastUrl = it } }
+                override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                    if (request.isForMainFrame) SheinWeb.log("load_error", "${error.errorCode} ${error.description} ${request.url}")
+                }
+                override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, r: android.webkit.WebResourceResponse) {
+                    if (request.isForMainFrame || r.statusCode >= 500) SheinWeb.log("http_${r.statusCode}", request.url.toString())
+                }
+                override fun onRenderProcessGone(view: WebView, detail: android.webkit.RenderProcessGoneDetail): Boolean {
+                    SheinWeb.log("renderer_gone", "crash=${detail.didCrash()} ${SheinWeb.lastUrl}")
+                    SheinWeb.reset(); generation++   // fresh browser, same page
+                    return true
+                }
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                    pendingImage?.let { img -> pendingImage = null; callback.onReceiveValue(arrayOf(img)); return true }   // our photo button
                     fileCallback?.onReceiveValue(null); fileCallback = callback
                     chooser.launch("image/*"); return true
                 }
-            }
-            loadUrl(SHEIN_SA, AR_HEADERS)
-        }
-    }
-    // photo search: our free AI vision reads the photo → SHEIN's own search shows the matching products
-    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        product = null; message = "بندوّر بالصورة في شي إن…"; pendingImage = uri
-        scope.launch {
-            // 1) SHEIN's own photo search: open it and hand it the photo (identical results to SHEIN)
-            var step = 0
-            while (pendingImage != null && step < 14) {
-                if (step == 4) {   // no camera on this page → open a SHEIN results page (its search bar has the camera)
-                    web.evaluateJavascript("(function(){location.href=location.origin+((location.pathname.match(/^\\/[a-z]{2}(?=\\/)/)||[''])[0])+'/pdsearch/dress/';})()", null)
-                    delay(3500)
+                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                    if (m.messageLevel() == android.webkit.ConsoleMessage.MessageLevel.ERROR) SheinWeb.log("js_error", "${m.message()} @${m.sourceId().substringAfterLast('/')}:${m.lineNumber()}")
+                    return true
                 }
-                web.evaluateJavascript(CAMERA_JS, null)
-                delay(1000); step++
             }
-            if (pendingImage == null) { message = null; return@launch }   // SHEIN took the photo
-            // 2) fallback: describe the photo and search SHEIN with those words
-            pendingImage = null
-            c.shein.imageSearchQuery(uri).onSuccess { (q, ar) ->
-                message = "نتايج شبه الصورة" + (if (ar.isNotBlank()) ": $ar" else "")
-                web.loadUrl(searchUrl(q))
-            }.onFailure { message = it.message ?: "معرفناش ندور بالصورة دي" }
         }
     }
-    bridge.onPick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+    // read the open product (price after the size is chosen) + send diagnostics now and then
     LaunchedEffect(web) {
+        var tick = 0
         while (true) {
             web.evaluateJavascript(READ_JS) { r ->
-                val o = runCatching {
-                    c.api.json.parseToJsonElement(c.api.json.parseToJsonElement(r).jsonPrimitive.content).jsonObject
-                }.getOrNull()
+                val o = runCatching { c.api.json.parseToJsonElement(c.api.json.parseToJsonElement(r).jsonPrimitive.content).jsonObject }.getOrNull()
                 product = o?.let { parse(it) }
                 val cur = o?.get("cur")?.jsonPrimitive?.contentOrNull.orEmpty()
                 otherCurrency = when {
-                    cur.isBlank() || Regex("ر\\.?\\s?س|SR|SAR|﷼|\u20C1", RegexOption.IGNORE_CASE).containsMatchIn(cur) -> null
+                    cur.isBlank() || Regex("ر\\.?\\s?س|SR|SAR|﷼|⃁", RegexOption.IGNORE_CASE).containsMatchIn(cur) -> null
                     Regex("BHD|د\\.?\\s?ب").containsMatchIn(cur) -> "البحرين"
                     Regex("AED|د\\.?\\s?إ").containsMatchIn(cur) -> "الإمارات"
                     Regex("KWD|د\\.?\\s?ك").containsMatchIn(cur) -> "الكويت"
                     Regex("QAR|ر\\.?\\s?ق").containsMatchIn(cur) -> "قطر"
                     Regex("OMR|ر\\.?\\s?ع").containsMatchIn(cur) -> "عُمان"
-                    Regex("JOD|د\\.?\\s?أ").containsMatchIn(cur) -> "الأردن"
                     Regex("EGP|ج\\.?\\s?م|E£").containsMatchIn(cur) -> "مصر"
                     else -> null
                 }
             }
-            delay(1000)
-        }
-    }
-    BackHandler(enabled = web.canGoBack()) { web.goBack() }
-    fun open(url: String) { product = null; message = null; web.loadUrl(toSaudi(url), AR_HEADERS) }
-
-    Scaffold(floatingActionButton = {
-        FloatingActionButton(onClick = { openUrl(ctx, "https://wa.me/${settings?.whatsappNumber ?: "201050038728"}") },
-            containerColor = Color(0xFF25D366), contentColor = Color.White, shape = CircleShape,
-            modifier = Modifier.padding(bottom = if (product != null) 130.dp else 0.dp)) {
-            Icon(Icons.AutoMirrored.Outlined.Chat, "واتساب")
-        }
-    }) { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
-            // fixed slim bar (no moving parts): brand · photo search · link · cart
-            Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF070D1F), Color(0xFF1B2D5C))))
-                .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("SHEIN × عروض مصر", color = Gold, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleSmall)
-                    Text("لحد باب بيتك · 0 جمارك · 0 مخاطرة · خصومات لحد 80%", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                }
-                IconButton(onClick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                    Icon(Icons.Outlined.Image, "ابحث بالصورة", tint = Color.White)
-                }
-                IconButton(onClick = { showLink = !showLink }) { Icon(Icons.Outlined.Link, "لينك منتج", tint = Color.White) }
-                IconButton(onClick = onCart) {
-                    BadgedBox(badge = { if (cart.isNotEmpty()) Badge { Text("${cart.size}") } }) {
-                        Icon(Icons.Outlined.ShoppingCart, "السلة", tint = Color.White)
+            if (++tick % 30 == 0) {
+                val batch = synchronized(SheinWeb.logs) { SheinWeb.logs.toList().also { SheinWeb.logs.clear() } }
+                if (batch.isNotEmpty()) launch {
+                    runCatching {
+                        c.supabase.fn("api", buildJsonObject {
+                            put("action", "client_log"); put("app", com.dealsmasr.app.BuildConfig.VERSION_NAME)
+                            put("logs", buildJsonArray { batch.forEach { (k, m) -> add(buildJsonObject { put("kind", k); put("message", m); put("url", SheinWeb.lastUrl) }) } })
+                        })
                     }
                 }
             }
-            if (showLink) Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(link, { link = it }, Modifier.weight(1f), singleLine = true,
-                    placeholder = { Text("الصق لينك منتج من شي إن") }, shape = RoundedCornerShape(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Button(onClick = {
-                    val u = SheinLink.firstUrl(link)
-                    if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = ""; showLink = false } else message = "ده مش لينك شي إن"
-                }) { Text("افتح") }
-            }
-            // how it works, for customers (collapses to one line after "تمام")
-            if (showHelp) Surface(color = Gold.copy(alpha = 0.16f)) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                    Text("إزاي تطلب من شي إن السعودية؟", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
-                    Text("1) دوّر على المنتج في شي إن تحت بالكلام، أو بالصورة من أيقونة 🖼️ فوق، أو الصق لينك من 🔗.\n" +
-                        "2) افتح المنتج واختار اللون والمقاس والكمية زي ما بتعمل في شي إن بالظبط.\n" +
-                        "3) هيظهرلك تحت سعره بالجنيه لحد باب بيتك — من غير جمارك ولا مخاطرة.\n" +
-                        "4) دوس «اطلب ✓» واكتب اسمك وعنوانك ورقمك، وهنتواصل معاك واتساب.",
-                        style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { showHelp = false }, modifier = Modifier.align(Alignment.End)) { Text("تمام، فهمت") }
-                }
-            } else TextButton(onClick = { showHelp = true }, modifier = Modifier.fillMaxWidth().height(30.dp),
-                contentPadding = PaddingValues(0.dp)) { Text("❔ إزاي أطلب من شي إن؟", style = MaterialTheme.typography.labelMedium) }
+            delay(1500)
+        }
+    }
+    BackHandler(enabled = web.canGoBack()) { web.goBack() }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             otherCurrency?.let { country ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
-                    Text("شي إن فاتحة على $country. افتح قايمة شي إن (☰) ← الدولة/المنطقة ← اختار «المملكة العربية السعودية» مرة واحدة بس، وبعدها كل الأسعار هتتحسب صح.",
+                    Text("شي إن فاتحة على $country. من قايمة شي إن (☰) ← الدولة ← اختار «المملكة العربية السعودية» مرة واحدة بس.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer,
                         modifier = Modifier.fillMaxWidth().padding(10.dp))
                 }
             }
             message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
-            AndroidView({ web }, Modifier.weight(1f).fillMaxWidth())
+            AndroidView({ (web.parent as? ViewGroup)?.removeView(web); web }, Modifier.weight(1f).fillMaxWidth())
             product?.let { p ->
                 val waitSize = p.needSize && p.size.isBlank()
                 val each = p.retailSar?.takeIf { p.currencyOk && !waitSize }?.let { SheinPricing.line(BigDecimal(it.toString()), 1, cfg).lineTotalEgp }
                 Surface(tonalElevation = 6.dp, shadowElevation = 8.dp) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                if (each != null) {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            when {
+                                waitSize -> Text("اختار المقاس من فوق وهيظهرلك السعر لحد باب بيتك", style = MaterialTheme.typography.bodyMedium)
+                                each != null -> {
                                     Text("السعر لحد باب بيتك", style = MaterialTheme.typography.labelMedium)
                                     Text(Money.egp(each), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black,
                                         color = MaterialTheme.colorScheme.primary)
-                                } else Text(if (waitSize) "اختار المقاس الأول وهنحسبلك السعر لحد باب بيتك" else "اختار المنتج وإحنا هنسعّره لك",
-                                    style = MaterialTheme.typography.bodyMedium)
+                                    Text("+ ${Money.egp(cfg.deliveryFeeEgp)} شحن ثابت · الدفع عند الاستلام", style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                else -> Text("لحظة… بنحسب السعر", style = MaterialTheme.typography.bodyMedium)
                             }
-                            Button(onClick = { sheet = true }, modifier = Modifier.height(52.dp)) { Text("اطلب ✓", style = MaterialTheme.typography.titleMedium) }
                         }
-                        if (cfg.deliveryFeeEgp.signum() > 0) Text("+ ${Money.egp(cfg.deliveryFeeEgp)} مصاريف شحن مرة واحدة للطلب كله",
-                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Button(onClick = {
+                            busy = true
+                            scope.launch {
+                                val unit = p.retailSar?.takeIf { p.currencyOk }
+                                val r = if (unit != null) c.shein.addFromBrowser(p.url, p.title, p.image, unit, p.size, p.color, 1)
+                                else c.shein.addByUrl(p.url, null)
+                                busy = false
+                                if (r is AddResult.Error) message = r.message else onCheckout()
+                            }
+                        }, enabled = !busy && !waitSize, modifier = Modifier.height(52.dp)) {
+                            Text(if (busy) "لحظة…" else "اطلب ✓", style = MaterialTheme.typography.titleMedium)
+                        }
                     }
                 }
             }
         }
+        // round action buttons (WhatsApp · how to order · our group · cart)
+        Column(Modifier.align(Alignment.BottomStart).padding(start = 10.dp, bottom = if (product != null) 96.dp else 14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            RoundAction(Icons.AutoMirrored.Outlined.Chat, "كلّمنا", Color(0xFF25D366)) {
+                openUrl(ctx, "https://wa.me/${settings?.whatsappNumber ?: "201050038728"}")
+            }
+            RoundAction(Icons.Outlined.Groups, "جروبنا", Color(0xFF128C7E)) { openUrl(ctx, GROUP_LINK) }
+            RoundAction(Icons.AutoMirrored.Outlined.HelpOutline, "إزاي أطلب", Gold) { howTo = true }
+            BadgedBox(badge = { if (cart.isNotEmpty()) Badge { Text("${cart.size}") } }) {
+                RoundAction(Icons.Outlined.ShoppingCart, "السلة", Color(0xFF0E1B3D), onCart)
+            }
+        }
     }
 
-    if (sheet) product?.let { p ->
-        var size by remember(p.gid) { mutableStateOf(p.size) }
-        var color by remember(p.gid) { mutableStateOf(p.color) }
-        var qty by remember(p.gid) { mutableStateOf(1) }
-        var busy by remember { mutableStateOf(false) }
-        val unit = p.retailSar?.takeIf { p.currencyOk }
-        ModalBottomSheet(onDismissRequest = { sheet = false }) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(p.title, style = MaterialTheme.typography.titleMedium, maxLines = 2)
-                Text("اختار المقاس واللون من صفحة شي إن، وهيظهروا هنا. تقدر تعدّلهم.", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(size, { size = it }, Modifier.fillMaxWidth(), label = { Text("المقاس") }, singleLine = true)
-                OutlinedTextField(color, { color = it }, Modifier.fillMaxWidth(), label = { Text("اللون") }, singleLine = true)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("عدد القطع", Modifier.weight(1f))
-                    OutlinedButton(onClick = { if (qty > 1) qty-- }) { Text("−") }
-                    Text("  $qty  ", fontWeight = FontWeight.Bold)
-                    OutlinedButton(onClick = { if (qty < 20) qty++ }) { Text("+") }
+    if (howTo) {
+        var link by remember { mutableStateOf("") }
+        androidx.compose.material3.AlertDialog(onDismissRequest = { howTo = false },
+            title = { Text("إزاي تطلب من شي إن لحد البيت؟") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("1) دوّر على المنتج في شي إن بالاسم أو بالصورة (أيقونة الكاميرا في بحث شي إن).")
+                    Text("2) افتح المنتج وحدد المقاس واللون أو عدد القطع.")
+                    Text("3) هيظهرلك تحت السعر لحد باب بيتك بالجنيه.")
+                    Text("4) هتزود عليه ${Money.egp(cfg.deliveryFeeEgp)} شحن ثابت لكل المحافظات، والدفع عند الاستلام.")
+                    Text("5) دوس «اطلب ✓» واكتب اسمك وعنوانك ورقمك — وإحنا نكمّل الباقي ونكلمك.")
+                    OutlinedTextField(link, { link = it }, Modifier.fillMaxWidth(), singleLine = true,
+                        placeholder = { Text("أو الصق لينك منتج من شي إن") })
                 }
-                unit?.let {
-                    Text("لحد باب بيتك: ${Money.egp(SheinPricing.line(BigDecimal(it.toString()), qty, cfg).lineTotalEgp)}",
-                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
-                    if (cfg.deliveryFeeEgp.signum() > 0) Text("+ ${Money.egp(cfg.deliveryFeeEgp)} مصاريف شحن مرة واحدة للطلب",
-                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Button(onClick = {
-                    busy = true
-                    scope.launch {
-                        val r = if (unit != null) c.shein.addFromBrowser(p.url, p.title, p.image, unit, size, color, qty)
-                        else c.shein.addByUrl(p.url, null)   // price not readable here → our server prices it
-                        busy = false; sheet = false
-                        when (r) {
-                            is AddResult.Error -> message = r.message
-                            else -> if (unit != null) onCheckout() else onCart()
-                        }
-                    }
-                }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Text(if (busy) "لحظة…" else "كمّل الطلب (الاسم والعنوان والموبايل)")
-                }
-                Spacer(Modifier.height(12.dp))
-            }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val u = SheinLink.firstUrl(link)
+                    if (u != null && SheinLink.isSheinUrl(u)) { product = null; web.loadUrl(toSaudi(u), AR_HEADERS) }
+                    howTo = false
+                }) { Text(if (link.isBlank()) "تمام" else "افتح اللينك") }
+            })
+    }
+}
+
+@Composable
+private fun RoundAction(icon: ImageVector, label: String, color: Color, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Surface(onClick = onClick, shape = CircleShape, color = color, shadowElevation = 6.dp, modifier = Modifier.size(50.dp)) {
+            Box(contentAlignment = Alignment.Center) { Icon(icon, label, tint = Color.White) }
+        }
+        Surface(shape = RoundedCornerShape(8.dp), color = Color.Black.copy(alpha = 0.55f)) {
+            Text(label, color = Color.White, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
         }
     }
 }

@@ -101,17 +101,41 @@ val CATEGORY_MENU: List<Pair<String, List<String>>> = listOf(
     "حيوانات أليفة" to listOf("مستلزمات"),
 )
 
-private val CATEGORY_ICONS: Map<String, androidx.compose.ui.graphics.vector.ImageVector> = mapOf(
+internal val CATEGORY_ICONS: Map<String, androidx.compose.ui.graphics.vector.ImageVector> = mapOf(
     "ملابس" to Icons.Outlined.Checkroom, "إلكترونيات" to Icons.Outlined.Devices, "أجهزة منزلية" to Icons.Outlined.LocalLaundryService,
     "البيت والمطبخ" to Icons.Outlined.Kitchen, "جمال وعناية" to Icons.Outlined.Face, "صحة ورياضة" to Icons.Outlined.FitnessCenter,
     "أطفال ولعب" to Icons.Outlined.Toys, "سوبرماركت" to Icons.Outlined.ShoppingCart, "عربيات" to Icons.Outlined.DirectionsCar,
     "كتب ومكتبة" to Icons.AutoMirrored.Outlined.MenuBook, "حيوانات أليفة" to Icons.Outlined.Pets,
 )
-private val CATEGORY_COLORS: Map<String, Color> = mapOf(
+internal val CATEGORY_COLORS: Map<String, Color> = mapOf(
     "ملابس" to Color(0xFFB0185E), "إلكترونيات" to Color(0xFF1E5BD8), "أجهزة منزلية" to Color(0xFF00897B), "البيت والمطبخ" to Color(0xFFE07B00),
     "جمال وعناية" to Color(0xFFD81B60), "صحة ورياضة" to Color(0xFF2E7D32), "أطفال ولعب" to Color(0xFF8E24AA), "سوبرماركت" to Color(0xFF6D4C41),
     "عربيات" to Color(0xFF37474F), "كتب ومكتبة" to Color(0xFF5D4037), "حيوانات أليفة" to Color(0xFFF4511E),
 )
+
+/** Keyword groups for the channel posts (they carry no category). */
+val CRAZY_CATS: List<Pair<String, List<String>>> = listOf(
+    "ملابس" to listOf("تيشيرت", "قميص", "بنطلون", "فستان", "جاكيت", "هودي", "ملابس", "حذاء", "جزمة", "كوتشي", "shirt", "dress", "jeans", "shoes", "sneaker"),
+    "إلكترونيات" to listOf("موبايل", "سماعة", "شاحن", "لابتوب", "شاشة", "ساعة", "iphone", "samsung", "xiaomi", "airpods", "laptop", "tv", "باور بانك"),
+    "سوبرماركت" to listOf("زيت", "سكر", "رز", "شاي", "قهوة", "مكرونة", "لبن", "جبنة", "شوكولاتة", "منظف", "مسحوق", "بريدفاست", "سوبرماركت"),
+    "جمال وعناية" to listOf("كريم", "شامبو", "برفان", "عطر", "مكياج", "سيروم", "واقي شمس", "perfume", "serum"),
+    "البيت والمطبخ" to listOf("طقم", "حلة", "طاسة", "مفرش", "ملاية", "خلاط", "قلاية", "مكنسة", "غسالة", "ثلاجة", "بوتاجاز", "تيفال"),
+    "أطفال" to listOf("أطفال", "اطفال", "بيبي", "حفاض", "لعبة", "لعب", "baby", "kids", "toy"),
+)
+
+@Composable
+fun CategoryChips(names: List<String>, selected: String?, onSelect: (String?) -> Unit, allLabel: String = "الكل") {
+    androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        item { androidx.compose.material3.FilterChip(selected = selected == null, onClick = { onSelect(null) }, label = { Text(allLabel) }) }
+        items(names.size) { i ->
+            val name = names[i]
+            androidx.compose.material3.FilterChip(selected = selected == name, onClick = { onSelect(if (selected == name) null else name) },
+                label = { Text(name) },
+                leadingIcon = CATEGORY_ICONS[name]?.let { ic -> { Icon(ic, null, Modifier.size(18.dp), tint = CATEGORY_COLORS[name] ?: Color.Unspecified) } })
+        }
+    }
+}
 
 @Composable
 fun AppDrawerContent(onCategory: (String) -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
@@ -147,7 +171,7 @@ fun AppDrawerContent(onCategory: (String) -> Unit, onFavorites: () -> Unit, onSe
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> Unit) {
+fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> Unit, onOpenCategory: (String) -> Unit = {}) {
     val c = appContainer()
     val scope = rememberCoroutineScope()
     val favs by c.deals.favoriteIds.collectAsState(initial = emptyList())
@@ -175,6 +199,9 @@ fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> 
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
     }) { pad ->
         Column(Modifier.padding(pad)) {
+            CATEGORY_MENU.firstOrNull { it.first == category.substringBefore('/') }?.let { (main, subs) ->
+                CategoryChips(subs, category.substringAfter('/', "").ifBlank { null }, { sub -> onOpenCategory(if (sub == null) main else "$main/$sub") }, "كل $main")
+            }
             androidx.compose.material3.OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                 placeholder = { Text("دوّر في ${category.substringAfter('/')}…") }, singleLine = true, shape = RoundedCornerShape(24.dp),
                 leadingIcon = { Icon(Icons.Outlined.Search, null) },
@@ -234,18 +261,20 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val filter = initialFilter.coerceIn(0, CRAZY_FILTERS.size - 1)
     var grid by rememberSaveable { mutableStateOf(true) }   // grid (3–4 per row) or one under the other
-    val posts = remember(filter) { mutableStateListOf<DealsRepository.TgPost>() }
-    var loading by remember(filter) { mutableStateOf(true) }
-    var end by remember(filter) { mutableStateOf(false) }
-    var error by remember(filter) { mutableStateOf<String?>(null) }
+    var cat by rememberSaveable { mutableStateOf<String?>(null) }
+    val k = "$filter|$cat"
+    val posts = remember(k) { mutableStateListOf<DealsRepository.TgPost>() }
+    var loading by remember(k) { mutableStateOf(true) }
+    var end by remember(k) { mutableStateOf(false) }
+    var error by remember(k) { mutableStateOf<String?>(null) }
     suspend fun load() {
         loading = true; error = null
-        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.postedIso, CRAZY_FILTERS[filter].second) }
+        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.postedIso, CRAZY_FILTERS[filter].second, CRAZY_CATS.firstOrNull { it.first == cat }?.second.orEmpty()) }
             .onSuccess { new -> posts.addAll(new.filter { n -> posts.none { it.key == n.key } }); end = new.size < 40 }
             .onFailure { error = "مقدرناش نجيب العروض، اتأكد من النت" }
         loading = false
     }
-    LaunchedEffect(filter) { load() }
+    LaunchedEffect(k) { load() }
     Scaffold(topBar = {
         TopAppBar(title = { Text(if (filter == 0) "🔥 عروض مطرقعة" else CRAZY_FILTERS[filter].first) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } },
@@ -254,7 +283,10 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
                     Icon(if (grid) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, if (grid) "تحت بعض" else "شبكة")
                 }
             })
-    }) { pad ->
+    }) { pad0 ->
+      Column(Modifier.padding(pad0)) {
+        CategoryChips(CRAZY_CATS.map { it.first }, cat, { cat = it })
+        val pad = PaddingValues(0.dp)
         when {
             posts.isEmpty() && loading -> Column(Modifier.padding(pad)) { SkeletonGrid() }
             posts.isEmpty() && error != null -> ErrorState(error!!, { scope.launch { load() } }, Modifier.padding(pad))
@@ -272,6 +304,7 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
             }
         }
     }
+      }
 }
 
 @Composable

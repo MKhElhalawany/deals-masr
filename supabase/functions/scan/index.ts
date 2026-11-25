@@ -291,10 +291,29 @@ async function runShein(id: number) {
   return patch;
 }
 
+/** New order → WhatsApp message to the owner's own number (free CallMeBot API, set up once by the owner). */
+async function whatsappOwner(o: any) {
+  const key = Deno.env.get("CALLMEBOT_APIKEY") ?? "", phone = (Deno.env.get("OWNER_WHATSAPP") ?? "201050038728").replace(/\D/g, "");
+  if (!key) return false;
+  const items: any[] = Array.isArray(o.items) ? o.items : [];
+  const lines = items.map((it, i) => [
+    `${i + 1}) ${String(it.title ?? "").slice(0, 90)}`,
+    `المقاس: ${it.size || "-"} | اللون: ${it.color || "-"} | الكمية: ${it.quantity ?? 1}`,
+    `السعر: ${it.lineTotalEgp ?? it.line_total_egp ?? "-"} ج.م`,
+    String(it.productUrl ?? it.product_url ?? ""),
+  ].filter(Boolean).join("\n"));
+  const text = [`🛍️ طلب شي إن جديد #${o.id}`, `العميل: ${o.customer_name} — ${o.customer_phone}`, `العنوان: ${o.address ?? "-"}`,
+    ...lines, `الشحن: ${o.delivery_fee_egp} ج.م`, `💰 الإجمالي: ${o.total_egp} ج.م (الدفع عند الاستلام)`].join("\n").slice(0, 3500);
+  const r = await fetch(`https://api.callmebot.com/whatsapp.php?phone=${phone}&apikey=${encodeURIComponent(key)}&text=${encodeURIComponent(text)}`,
+    { signal: AbortSignal.timeout(15_000) }).catch(() => null);
+  return !!r?.ok;
+}
+
 async function runOrder(id: string) {
-  if (!pushEnabled()) return { skipped: "push off" };
-  const o = (await select(`orders?select=id,user_id,status,customer_name,total_egp&id=eq.${encodeURIComponent(id)}`))[0];
+  const o = (await select(`orders?select=id,user_id,status,customer_name,customer_phone,address,items,delivery_fee_egp,total_egp&id=eq.${encodeURIComponent(id)}`))[0];
   if (!o) return { skipped: true };
+  const wa = o.status === "submitted" ? await whatsappOwner(o) : false;
+  if (!pushEnabled()) return { skipped: "push off", whatsapp: wa };
   if (o.status === "confirmed") {
     const toks = (await select(`device_tokens?select=token&enabled=eq.true&user_id=eq.${o.user_id}`)).map((t: any) => t.token);
     await toTokens(toks, "تم تأكيد طلبك 🎉", `طلب #${o.id} اتأكد وهيوصلك خلال 25–35 يوم`, `order/${o.id}`, `c${o.id}`);

@@ -132,11 +132,13 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                     onSettings = { nav.navigate("settings") },
                     onMenu = { scope.launch { drawer.open() } },
                     onCrazy = { f -> nav.navigate("crazy?f=$f") },
+                    onCategory = { nav.navigate("category/${URLEncoder.encode(it, "UTF-8")}") },
                 )
             }
             composable("category/{c}") { e ->
                 com.dealsmasr.app.ui.browse.CategoryScreen(java.net.URLDecoder.decode(e.arguments?.getString("c").orEmpty(), "UTF-8"),
-                    onBack = { nav.popBackStack() }, onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") })
+                    onBack = { nav.popBackStack() }, onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") },
+                    onOpenCategory = { nav.navigate("category/${URLEncoder.encode(it, "UTF-8")}") { popUpTo("category/{c}") { inclusive = true } } })
             }
             composable("crazy?f={f}", arguments = listOf(navArgument("f") { type = NavType.IntType; defaultValue = 0 })) { e ->
                 com.dealsmasr.app.ui.browse.CrazyDealsScreen(e.arguments?.getInt("f") ?: 0, onBack = { nav.popBackStack() })

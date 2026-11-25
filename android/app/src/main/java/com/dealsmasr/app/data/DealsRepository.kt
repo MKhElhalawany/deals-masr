@@ -277,10 +277,12 @@ class DealsRepository(
     }
 
     /** "عروض مطرقعة": posts of the deal channels the server follows, newest first (all channels mixed). */
-    suspend fun crazyPosts(beforeIso: String? = null, keywords: List<String> = emptyList()): List<TgPost> =
+    suspend fun crazyPosts(beforeIso: String? = null, keywords: List<String> = emptyList(), catKeywords: List<String> = emptyList()): List<TgPost> =
         rows(supabase.select("tg_posts", "select=channel,post_id,text,url,image_url,price,old_price,posted_at" +
             "&posted_at=not.is.null" + (beforeIso?.let { "&posted_at=lt.${enc(it)}" } ?: "") +
-            (if (keywords.isEmpty()) "" else "&or=(" + keywords.joinToString(",") { "text.ilike.*${enc(it)}*" } + ")") +
+            listOf(keywords, catKeywords).filter { it.isNotEmpty() }.let { groups ->
+                if (groups.isEmpty()) "" else "&and=(" + groups.joinToString(",") { g -> "or(" + g.joinToString(",") { "text.ilike.*${enc(it)}*" } + ")" } + ")"
+            } +
             "&order=posted_at.desc&limit=40")).map {
             TgPost(it.str("channel").orEmpty(), (it["post_id"] as? JsonPrimitive)?.longOrNull ?: 0, it.str("text").orEmpty(), it.str("url"),
                 it.str("image_url"), it.num("price"), it.num("old_price"), epoch(it.str("posted_at")), it.str("posted_at"))

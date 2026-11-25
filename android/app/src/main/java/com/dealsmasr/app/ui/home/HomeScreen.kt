@@ -2,6 +2,7 @@ package com.dealsmasr.app.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -127,6 +128,7 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onMenu: () -> Unit,
     onCrazy: (Int) -> Unit = {},
+    onCategory: (String) -> Unit = {},
 ) {
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
@@ -173,6 +175,20 @@ fun HomeScreen(
                             Text("آخر تحديث ${relativeTime(s.lastRefresh / 1000)} · ${s.deals.size} عرض",
                                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(horizontal = 16.dp))
+                        }
+                        item(key = "cats") {
+                            LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(com.dealsmasr.app.ui.browse.CATEGORY_MENU.size) { i ->
+                                    val main = com.dealsmasr.app.ui.browse.CATEGORY_MENU[i].first
+                                    Column(Modifier.width(74.dp).clickable { onCategory(main) }, horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Box(Modifier.size(52.dp).background(com.dealsmasr.app.ui.browse.CATEGORY_COLORS[main] ?: Color.Gray, CircleShape),
+                                            contentAlignment = Alignment.Center) {
+                                            Icon(com.dealsmasr.app.ui.browse.CATEGORY_ICONS[main] ?: Icons.Outlined.LocalOffer, null, tint = Color.White)
+                                        }
+                                        Text(main, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                                    }
+                                }
+                            }
                         }
                         if (forYou.isNotEmpty()) {
                             item(key = "h_foryou") { SectionHeader("✨ مختار ليك") }

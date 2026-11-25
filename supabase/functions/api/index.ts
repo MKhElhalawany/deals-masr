@@ -352,6 +352,13 @@ Deno.serve(async (req) => {
     else if (b.action === "chat") out = await chat(b, uid);
     else if (b.action === "status") out = { ai: geminiConfigured() };
     else if (b.action === "image_query") out = await imageQuery(b);
+    else if (b.action === "client_log") {   // in-app browser diagnostics (max 20 short lines per call)
+      const rows = (Array.isArray(b.logs) ? b.logs : []).slice(0, 20).map((l: any) => ({ user_id: uid,
+        kind: String(l.kind ?? "").slice(0, 30), message: String(l.message ?? "").slice(0, 300),
+        url: String(l.url ?? "").replace(/[?#].*$/, "").slice(0, 200), app: String(b.app ?? "").slice(0, 20) }));
+      if (rows.length) await rest("POST", "client_logs", rows, "return=minimal");
+      out = { ok: rows.length };
+    }
     else if (b.action === "phone_report") out = await phoneReport(b, uid);
     else out = { error: "unknown action" };
     return Response.json(out, { headers: CORS });

@@ -10,3 +10,4 @@ select audit_status, count(*) from public.deals where active or audit_status = '
 select category, count(*) from public.deals where active group by 1 order by 2 desc limit 40;
 select left(title, 60) as t, current_price as p, original_price as o, typical_low as lo, typical_high as hi, audit_note from public.deals where audit_status = 'fake' order by audited_at desc limit 25;
 select left(title, 50) as t, current_price as p, original_price as o, typical_high as hi, category from public.deals where audit_status = 'ok' order by audited_at desc limit 12;
+select kind, left(message, 160) as msg, url, count(*), max(at) from public.client_logs where at > now() - interval '2 days' group by 1,2,3 order by 5 desc limit 40;

@@ -64,11 +64,13 @@ fun DealsScreen(initialTier: String?, onCrazy: () -> Unit = {}, onProduct: (Stri
     var stores by rememberSaveable { mutableStateOf(setOf<String>()) }
     var sortMenu by remember { mutableStateOf(false) }
 
-    val shown = remember(s.deals, tier, sort, stores, s.tiers) {
+    var cat by rememberSaveable { mutableStateOf<String?>(null) }
+    val shown = remember(s.deals, tier, sort, stores, s.tiers, cat) {
         val range = tier?.let { DealMath.tierRange(it, s.tiers) }
         DealMath.sort(
             s.deals.filter { d ->
                 (stores.isEmpty() || d.marketplace in stores) &&
+                    (cat == null || d.category?.startsWith("$cat/") == true) &&
                     (range == null || (d.discountPct >= range.first && (range.second == null || d.discountPct < range.second!!)))
             },
             sort,
@@ -104,6 +106,7 @@ fun DealsScreen(initialTier: String?, onCrazy: () -> Unit = {}, onProduct: (Stri
                         })
                 }
             }
+            com.dealsmasr.app.ui.browse.CategoryChips(com.dealsmasr.app.ui.browse.CATEGORY_MENU.map { it.first }, cat, { cat = it }, "كل الأقسام")
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     androidx.compose.material3.AssistChip(onClick = onCrazy, label = { Text("🔥 عروض مطرقعة", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
