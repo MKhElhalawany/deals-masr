@@ -5,6 +5,7 @@
 import { gemini } from "./gemini.ts";
 import { Robots } from "./robots.ts";
 
+export let lastRaw = "";
 export type WebOffer = { store: string; title: string; url: string; price: number; image_url: string | null };
 const CSE_KEY = Deno.env.get("GOOGLE_CSE_KEY") ?? "", CSE_CX = Deno.env.get("GOOGLE_CSE_CX") ?? "";
 const UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36";
@@ -23,6 +24,7 @@ async function viaGemini(product: string, price: number): Promise<WebOffer[]> {
     [{ role: "user", text: `Product: ${product}\nCurrent price we know: ${price} EGP` }],
     { search: true, maxTokens: 1200, temperature: 0 });
   if (!g) return [];
+  lastRaw = g.text.slice(0, 300) + " [" + g.model + "]";
   try {
     const arr = JSON.parse(g.text.slice(g.text.indexOf("["), g.text.lastIndexOf("]") + 1));
     return (Array.isArray(arr) ? arr : []).map((o: any) => ({ store: String(o.store ?? host(String(o.url))).slice(0, 40),

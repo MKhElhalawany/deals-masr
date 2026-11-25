@@ -245,7 +245,9 @@ create trigger call_scan after insert or update of status on public.orders for e
             body = r.text
             if job["job"] in ("compare", "webcheck"):
                 offers = r.json().get("offers", [])
-                body = f"{len(offers)} offers, e.g. " + json.dumps([[o["title"][:50], o["price"]] for o in offers[:4]], ensure_ascii=False)
+                j = r.json()
+                body = f"{len(offers)} offers, e.g. " + json.dumps([[o["title"][:50], o["price"], o.get("url", "")[:80]] for o in offers[:6]], ensure_ascii=False) \
+                    + "\nraw: " + str(j.get("raw", ""))[:300] + "\nai errors: " + json.dumps(j.get("aiErrors", {}), ensure_ascii=False)[:600]
             print(f"::group::{job['job']} check (HTTP {r.status_code})\n{body[:1500]}\n::endgroup::")
         except Exception as e:
             print(job["job"], "check failed", e)

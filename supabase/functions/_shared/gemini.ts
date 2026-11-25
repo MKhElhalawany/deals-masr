@@ -6,6 +6,8 @@ const BASE = "https://generativelanguage.googleapis.com/v1beta";
 let chain: { names: string[]; at: number } | null = null;
 const resting = new Map<string, number>();   // model → time until which it is skipped (quota hit)
 export const geminiConfigured = () => KEY.length > 10;
+/** last failure per model (diagnostics only, no secrets) */
+export const aiErrors: Record<string, string> = {};
 
 async function models(): Promise<string[]> {
   if (chain && Date.now() - chain.at < 6 * 3600_000) return chain.names;
@@ -52,7 +54,8 @@ export async function gemini(system: string, turns: Turn[], opts: { json?: boole
       const r = await fetch(`${BASE}/${m}:generateContent?key=${KEY}`, { method: "POST", signal: AbortSignal.timeout(25_000),
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (!r.ok) {
-        console.warn("ai", m, r.status, (await r.text()).slice(0, 160));
+        const t = (await r.text()).slice(0, 160);
+        console.warn("ai", m, r.status, t); aiErrors[m.replace("models/", "") + (opts.search ? "+search" : "")] = `${r.status} ${t}`;
         if (r.status === 404) chain = null;
         resting.set(m, Date.now() + (r.status === 429 ? 10 * 60_000 : 60_000));
         continue;

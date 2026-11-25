@@ -205,37 +205,61 @@ async function chat(b: any, uid: string) {
   const n = await rest("POST", "rpc/bump_assistant_usage", { p_user: uid });
   if (Number(n) > DAILY_LIMIT) return { reply: `وصلت للحد اليومي (${DAILY_LIMIT} رسالة). تقدر تسألني تاني بكرة، ولحد ما تقدر تدور بنفسك من صفحة البحث.`, products: [], limited: true };
 
-  // real offers from our database for what the user asked (always, even if the AI is busy)
-  const maxPrice = maxPriceOf(last);
-  const en = await englishOf(last);
-  const queryWords = (en ? words(en) : words(last)).slice(0, 3);
+  // 1) what exactly is the user looking for right now (follow-ups like "هاتلي لينكها" refer to earlier messages)
+  const intentAi = await gemini("From this shopping conversation, extract what the user wants to buy NOW. Reply JSON " +
+    '{"query": exact product search query in English with brand/model/size if known, or null if no product is asked about, ' +
+    '"max_price": number in EGP or null}.', msgs.slice(-6).map((m) => ({ role: m.role as "user" | "model", text: m.text })), { json: true, maxTokens: 120, temperature: 0 });
+  let intent: { query: string | null; max_price: number | null } = { query: null, max_price: null };
+  try { if (intentAi) intent = JSON.parse(intentAi.text); } catch { /* fallback below */ }
+  const en = intent.query ? null : await englishOf(last);
+  const searchQ = String(intent.query ?? en ?? last).slice(0, 100);
+  const maxPrice = Number(intent.max_price) > 0 ? Number(intent.max_price) : maxPriceOf(last);
+  const queryWords = words(searchQ).slice(0, 3);
+
+  // 2) candidates: our deals + live store search + the whole web (Google search through the AI)
   let products: any[] = [];
   if (queryWords.length) {
-    const f = [`select=${COLS}`, "active=eq.true", `and=(${queryWords.map(ilikeWord).join(",")})`, "order=deal_pct.desc.nullslast", "limit=8"];
+    const f = [`select=${COLS}`, "active=eq.true", `and=(${queryWords.map(ilikeWord).join(",")})`, "order=deal_pct.desc.nullslast", "limit=12"];
     if (maxPrice) f.push(`current_price=lte.${maxPrice}`);
     products = await rest("GET", `deals?${f.join("&")}`).catch(() => []);
-    if (!products.length && queryWords.length > 1) {
-      f[2] = `or=(${queryWords.map(ilikeWord).join(",")})`;
-      products = await rest("GET", `deals?${f.join("&")}`).catch(() => []);
+  }
+  const [liveRaw, web] = intent.query || queryWords.length >= 2
+    ? await Promise.all([liveOffers(searchQ), webOffers(searchQ, 0)]) : [[], []];
+  let live = [...web, ...liveRaw].filter((o) => !maxPrice || o.price <= maxPrice);
+
+  // 3) keep ONLY the exact thing asked for (no accessories, no other models)
+  const cand = [...products.map((p) => ({ t: p.title as string, price: Number(p.current_price) })), ...live.map((o) => ({ t: o.title, price: o.price }))];
+  if (cand.length && searchQ) {
+    const keep = await gemini("Keep only candidates that ARE the product the user asked for (same product type, and same brand/model when " +
+      "the request names one). Drop accessories, spare parts, cases, mounts and different products. Reply JSON array of kept numbers.",
+      [{ role: "user", text: JSON.stringify({ request: searchQ, candidates: cand.map((c, i) => ({ n: i, title: c.t.slice(0, 140), price: c.price })) }) }],
+      { json: true, maxTokens: 300, temperature: 0 });
+    let ids: number[] | null = null;
+    try { const a = keep ? JSON.parse(keep.text) : null; if (Array.isArray(a)) ids = a.map(Number); } catch { /* keep all */ }
+    if (ids) {
+      const set = new Set(ids), pLen = products.length;
+      products = products.filter((_, i) => set.has(i));
+      live = live.filter((_, i) => set.has(pLen + i));
     }
   }
+  products = products.slice(0, 8);
+  live = live.sort((a, b) => a.price - b.price).slice(0, 8);
   const catalog = products.map((p, i) => ({ n: i + 1, title: p.title.slice(0, 120), store: STORE_AR[p.store_id] ?? p.store_id,
     price: Number(p.current_price), before: p.original_price ? Number(p.original_price) : null, discount: Number(p.deal_pct ?? 0),
     coupon_price: p.best_price ? Number(p.best_price) : null }));
-  // live prices right now (store search allowed by robots.txt), cheapest first, so the bot can name the lowest price
-  const live = queryWords.length ? (await liveOffers((en ?? last).slice(0, 80)))
-    .filter((o) => !maxPrice || o.price <= maxPrice).sort((a, b) => a.price - b.price).slice(0, 6) : [];
   const liveList = live.map((o, i) => ({ n: `L${i + 1}`, title: o.title.slice(0, 120), store: STORE_AR[o.store] ?? o.store, price: o.price }));
   const system = [
     "انت \"مساعد عروض مصر\": مساعد تسوق ذكي بالعامية المصرية، ودود ومختصر ومفيد.",
     "بتساعد في: ترشيح منتجات حسب الميزانية والاستخدام، المقارنات، شرح المواصفات، المقاسات، وهل العرض يستاهل.",
-    "عندك قايمة عروض حقيقية من قاعدة بياناتنا (أمازون ونون وتاون تيم). لما ترشح منتج منها اذكر رقمه بين قوسين زي [2] واسم المتجر وسعره كما هو بالظبط.",
+    "هدفك تفيد المستخدم بأرخص وأحسن مكان يشتري منه المنتج اللي طلبه بالظبط من أي موقع في مصر، مش تسوّق لعروض التطبيق.",
+    "عندك قايمتين: عروض من قاعدة بياناتنا، ونتايج بحث في النت كله (جوجل والمتاجر). لما ترشح حاجة اذكر رقمها بين قوسين زي [2] أو [L1] واسم المتجر وسعره كما هو.",
+    "اللينكات بتظهر للمستخدم ككروت تحت ردك يدوس عليها تفتح صفحة المتجر على طول — قوله كده. ممنوع تقول إن مفيش لينكات لو القايمة فيها حاجة.",
     "ممنوع تخترع أسعار أو عروض أو روابط. لو القايمة فاضية أو مش مناسبة قول كده بوضوح، واقترح مواصفات يدور عليها أو كلمة بحث أدق.",
     "لما تقول معلومة عامة من معرفتك (مش من القايمة) وضّح إنها معلومة عامة ممكن تختلف.",
     "اسأل سؤال توضيحي واحد بس لو الطلب مش واضح فعلاً (زي الميزانية أو المقاس).",
     `القايمة: ${JSON.stringify(catalog)}`,
-    "وعندك كمان أسعار لحظية من بحث مباشر في المتاجر (مش لازم تكون عروض)، رتبها من الأرخص؛ لو حد سأل عن أرخص سعر قارن بين القايمتين وقول الأرخص بوضوح واذكر رقمه زي [L1].",
-    `بحث مباشر: ${JSON.stringify(liveList)}`,
+    "قارن بين القايمتين وقول الأرخص بوضوح.",
+    `نتايج النت (مرتبة من الأرخص): ${JSON.stringify(liveList)}`,
     ...(b.lang === "en" ? ["IMPORTANT: the user chose English. Reply in clear, friendly English."] : []),
     ...(typeof b.profile === "string" && b.profile ? [`اهتمامات المستخدم (اتعلمناها من استخدامه للتطبيق، استخدمها للترشيح): ${b.profile.slice(0, 300)}`] : []),
   ].join("\n");
