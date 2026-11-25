@@ -189,10 +189,10 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             setCookie(".shein.com", "currency=SAR; path=/"); setCookie("ar.shein.com", "currency=SAR; path=/")
         }
         WebView(ctx).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.loadWithOverviewMode = true
-            settings.useWideViewPort = true
+            this.settings.javaScriptEnabled = true
+            this.settings.domStorageEnabled = true
+            this.settings.loadWithOverviewMode = true
+            this.settings.useWideViewPort = true
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val u = request.url
