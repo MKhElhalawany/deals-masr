@@ -99,7 +99,7 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                             label = { Text("$p%+") })
                     }
                 }
-                Toggle("🔥 إشعارات العروض المجنونة", st.crazyNotify) { on -> scope.launch { c.settings.setCrazyNotify(on) } }
+                Toggle("🔥 إشعارات العروض المطرقعة", st.crazyNotify) { on -> scope.launch { c.settings.setCrazyNotify(on) } }
                 Text("العروض بيتابعها سيرفرنا 24 ساعة. 10–29% إشعار هادي · 30%+ 🔥 · 50%+ ⚡ · 70%+ 🚨 «الحق!»",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val live by c.realtime.connected.collectAsState()

@@ -24,7 +24,7 @@ export function prices(text: string): { price: number | null; old_price: number 
 }
 
 export function parseTelegram(html: string, channel: string): TgPost[] {
-  const marks = [...html.matchAll(new RegExp(`data-post="${channel}/(\\d+)"`, "g"))];
+  const marks = [...html.matchAll(new RegExp(`data-post="${channel}/(\\d+)"`, "gi"))];
   return marks.map((m, i) => {
     const chunk = html.slice(m.index!, marks[i + 1]?.index ?? html.length);
     const body = chunk.match(/class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? "";

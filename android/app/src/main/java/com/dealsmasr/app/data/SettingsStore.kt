@@ -55,7 +55,7 @@ data class AppSettings(
     val celebrated: Set<String>,
     /** "ar" or "en" (app UI language) */
     val language: String = "ar",
-    /** notify about new posts in "عروض مجنونة" */
+    /** notify about new posts in "عروض مطرقعة" */
     val crazyNotify: Boolean = true,
 ) {
     val hasServer get() = serverUrl.isNotBlank()

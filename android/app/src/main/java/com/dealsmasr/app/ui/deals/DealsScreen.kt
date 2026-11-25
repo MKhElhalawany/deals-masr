@@ -106,7 +106,7 @@ fun DealsScreen(initialTier: String?, onCrazy: () -> Unit = {}, onProduct: (Stri
             }
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    androidx.compose.material3.AssistChip(onClick = onCrazy, label = { Text("🔥 عروض مجنونة", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
+                    androidx.compose.material3.AssistChip(onClick = onCrazy, label = { Text("🔥 عروض مطرقعة", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
                         colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = androidx.compose.ui.graphics.Color(0xFFB3123A),
                             labelColor = androidx.compose.ui.graphics.Color.White))
                 }

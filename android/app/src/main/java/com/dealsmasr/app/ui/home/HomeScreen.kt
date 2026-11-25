@@ -236,7 +236,7 @@ private fun SearchEntry(onClick: () -> Unit) {
 @Composable
 private fun CrazyGrid(onOpen: (Int) -> Unit) {
     val tiles = listOf(
-        Triple("🔥 عروض مجنونة", "عروض طرش أول بأول", listOf(Color(0xFFB3123A), Color(0xFFE4572E))) to 0,
+        Triple("🔥 عروض مطرقعة", "عروض طرش أول بأول", listOf(Color(0xFFB3123A), Color(0xFFE4572E))) to 0,
         Triple("🍔 مطاعم وخروجات", "أكل وكافيهات وخروجات", listOf(Color(0xFFE07B00), Color(0xFFF2A93B))) to 3,
         Triple("🎟️ كوبونات", "أكواد خصم جاهزة", listOf(Color(0xFF0F7B5F), Color(0xFF2BAE87))) to 1,
         Triple("🎁 Buy 1 Get 1", "اشتري واحد والتاني هدية", listOf(Color(0xFF5B2A86), Color(0xFF8E4FC4))) to 2,

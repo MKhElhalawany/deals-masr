@@ -351,7 +351,7 @@ async function probe(url: string) {
 }
 
 // ───────── owner's public Telegram channel → "عروض مجنونة" (latest page + one older page per run until the start)
-const TG_CHANNELS = new Set(["deals_me"]);
+const TG_CHANNELS = new Set(["deals_me", "dawsha_4", "Yo_Ayman"]);   // owner-chosen public deal channels
 let tgRobots: { at: number; ok: (u: string) => boolean } | null = null;
 async function runTelegram(channel: string) {
   if (!TG_CHANNELS.has(channel)) return { error: "channel not allowed" };

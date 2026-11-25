@@ -23,6 +23,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.GridView
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Checkroom
 import androidx.compose.material.icons.outlined.Devices
@@ -231,54 +233,66 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val filter = initialFilter.coerceIn(0, CRAZY_FILTERS.size - 1)
+    var grid by rememberSaveable { mutableStateOf(true) }   // grid (3–4 per row) or one under the other
     val posts = remember(filter) { mutableStateListOf<DealsRepository.TgPost>() }
     var loading by remember(filter) { mutableStateOf(true) }
     var end by remember(filter) { mutableStateOf(false) }
     var error by remember(filter) { mutableStateOf<String?>(null) }
     suspend fun load() {
         loading = true; error = null
-        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.id, CRAZY_FILTERS[filter].second) }
-            .onSuccess { posts.addAll(it); end = it.size < 40 }
+        runCatching { c.deals.crazyPosts(posts.lastOrNull()?.postedIso, CRAZY_FILTERS[filter].second) }
+            .onSuccess { new -> posts.addAll(new.filter { n -> posts.none { it.key == n.key } }); end = new.size < 40 }
             .onFailure { error = "مقدرناش نجيب العروض، اتأكد من النت" }
         loading = false
     }
     LaunchedEffect(filter) { load() }
     Scaffold(topBar = {
-        TopAppBar(title = { Text(if (filter == 0) "🔥 عروض مجنونة" else CRAZY_FILTERS[filter].first) },
-            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
-    }) { pad0 ->
-      Column(Modifier.padding(pad0)) {
-        val pad = PaddingValues(0.dp)
+        TopAppBar(title = { Text(if (filter == 0) "🔥 عروض مطرقعة" else CRAZY_FILTERS[filter].first) },
+            navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } },
+            actions = {
+                IconButton(onClick = { grid = !grid }) {
+                    Icon(if (grid) Icons.AutoMirrored.Outlined.ViewList else Icons.Outlined.GridView, if (grid) "تحت بعض" else "شبكة")
+                }
+            })
+    }) { pad ->
         when {
             posts.isEmpty() && loading -> Column(Modifier.padding(pad)) { SkeletonGrid() }
             posts.isEmpty() && error != null -> ErrorState(error!!, { scope.launch { load() } }, Modifier.padding(pad))
-            posts.isEmpty() -> MessageState(Icons.Outlined.Bolt, "لسه مفيش عروض هنا", "السيرفر بيجيب عروض القناة كل 3 دقايق")
-            else -> LazyColumn(Modifier.padding(pad), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(posts, key = { it.id }) { p ->
-                    Card(shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().clickable(enabled = p.url != null) { p.url?.let { openUrl(ctx, it) } }) {
-                        p.imageUrl?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(1.6f), ContentScale.Crop) }
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            if (p.price != null && p.oldPrice != null) Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(Money.egp(p.price), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary,
-                                    style = MaterialTheme.typography.titleMedium)
-                                Spacer(Modifier.padding(4.dp))
-                                Text(Money.egp(p.oldPrice), textDecoration = TextDecoration.LineThrough,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                                Spacer(Modifier.padding(4.dp))
-                                Text("-${(100 * (p.oldPrice - p.price) / p.oldPrice).toInt()}%", fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.error)
-                            }
-                            Text(p.text, style = MaterialTheme.typography.bodyMedium, maxLines = 8)
-                            if (p.url != null) Text("افتح العرض ←", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                if (!end) item {
+            posts.isEmpty() -> MessageState(Icons.Outlined.Bolt, "لسه مفيش عروض هنا", "أول ما ينزل عرض جديد هيظهر هنا")
+            else -> LazyVerticalGrid(
+                columns = if (grid) GridCells.Adaptive(112.dp) else GridCells.Fixed(1),
+                modifier = Modifier.padding(pad), contentPadding = PaddingValues(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(posts, key = { it.key }) { p -> CrazyCard(p, compact = grid) { p.url?.let { openUrl(ctx, it) } } }
+                if (!end) item(span = { GridItemSpan(maxLineSpan) }) {
                     LaunchedEffect(posts.size) { if (!loading) load() }
                     Spacer(Modifier.height(24.dp))
                 }
             }
         }
-      }
+    }
+}
+
+@Composable
+private fun CrazyCard(p: DealsRepository.TgPost, compact: Boolean, onOpen: () -> Unit) {
+    Card(shape = RoundedCornerShape(if (compact) 12.dp else 16.dp), modifier = Modifier.fillMaxWidth().clickable(enabled = p.url != null, onClick = onOpen)) {
+        p.imageUrl?.let { NetImage(it, Modifier.fillMaxWidth().aspectRatio(if (compact) 1f else 1.6f), ContentScale.Crop) }
+        Column(Modifier.padding(if (compact) 6.dp else 12.dp), verticalArrangement = Arrangement.spacedBy(if (compact) 2.dp else 6.dp)) {
+            if (p.price != null && p.oldPrice != null) {
+                Text(Money.egp(p.price), fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary,
+                    style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleMedium, maxLines = 1)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(Money.egp(p.oldPrice), textDecoration = TextDecoration.LineThrough, maxLines = 1,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    Spacer(Modifier.padding(2.dp))
+                    Text("-${(100 * (p.oldPrice - p.price) / p.oldPrice).toInt()}%", fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                }
+            }
+            Text(p.text, style = if (compact) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodyMedium,
+                maxLines = if (compact) 3 else 8, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            if (p.url != null && !compact) Text("افتح العرض ←", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
+        }
     }
 }

@@ -161,7 +161,9 @@ create trigger call_scan after insert or update of status on public.orders for e
 
     # Phase 0: once a day (03:17 Cairo = 01:17 UTC) price history older than 90 days → one row per product per day
     S.sql(ref, "select cron.schedule('audit-deals', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"audit\"}'::jsonb)$c$)")
-    S.sql(ref, "select cron.schedule('telegram-deals-me', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"telegram\",\"channel\":\"deals_me\"}'::jsonb)$c$)")
+    for name, ch, when in (("telegram-deals-me", "deals_me", "*/3 * * * *"), ("telegram-dawsha-4", "dawsha_4", "1-59/3 * * * *"),
+                           ("telegram-yo-ayman", "Yo_Ayman", "2-59/3 * * * *")):
+        S.sql(ref, f"select cron.schedule('{name}', '{when}', $c$select app_private.call_scan('{{\"job\":\"telegram\",\"channel\":\"{ch}\"}}'::jsonb)$c$)")
     S.sql(ref, "select cron.schedule('categorize-deals', '*/5 * * * *', $c$select public.categorize_by_keywords(5000)$c$)")
     S.sql(ref, "select cron.schedule('compact-price-history', '17 1 * * *', $c$select public.compact_price_history(90)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []

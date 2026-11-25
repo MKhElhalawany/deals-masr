@@ -95,14 +95,14 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
     }
 }
 
-/** New posts in "عروض مجنونة" since the last check → one notification each (max 3), newest first. */
+/** New posts in "عروض مطرقعة" since the last check → one notification each (max 3), newest first. */
 private suspend fun CoroutineWorker.crazyDeals(c: AppContainer) {
-    val seen = c.settings.crazySeen()
+    val seen = c.settings.crazySeen().let { if (it < 1_000_000_000L) 0L else it }   // older versions stored a post number
     val posts = c.deals.crazyPosts()
-    val top = posts.firstOrNull()?.id ?: return
+    val top = posts.firstOrNull()?.postedAt ?: return
     if (seen == 0L) { c.settings.setCrazySeen(top); return }   // first run: don't flood with old posts
-    posts.filter { it.id > seen }.take(3).forEach { p ->
-        Notifier.show(applicationContext, ("tg" + p.id).hashCode(), Notifier.CH_DEALS, "🔥 عرض مجنون جديد",
+    posts.filter { it.postedAt > seen }.take(3).forEach { p ->
+        Notifier.show(applicationContext, ("tg" + p.key).hashCode(), Notifier.CH_DEALS, "🔥 عرض مطرقع جديد",
             p.text.lineSequence().firstOrNull { it.isNotBlank() }?.take(120) ?: "عرض جديد", "crazy?f=0")
     }
     c.settings.setCrazySeen(top)

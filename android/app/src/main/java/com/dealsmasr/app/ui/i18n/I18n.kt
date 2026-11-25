@@ -42,7 +42,7 @@ private val ARABIC = Regex("[\\u0600-\\u06FF]")
 private val EN = mapOf(
     "الرئيسية" to "Home", "العروض" to "Deals", "البحث" to "Search", "المساعد" to "Assistant", "الإعدادات" to "Settings",
     "المفضلة" to "Favorites", "الأقسام" to "Categories", "رجوع" to "Back", "الكل" to "All", "كل المتاجر" to "All stores",
-    "عروض مصر" to "Deals Masr", "🔥 عروض مجنونة" to "🔥 Crazy deals", "🎟️ كوبونات" to "🎟️ Coupons",
+    "عروض مصر" to "Deals Masr", "🔥 عروض مطرقعة" to "🔥 Hot drops", "🎟️ كوبونات" to "🎟️ Coupons",
     "1+1 اشتري واحد والتاني هدية" to "Buy 1 get 1", "🍔 مطاعم وأكل" to "🍔 Restaurants & food",
     "ملابس" to "Clothing", "رجالي" to "Men", "حريمي" to "Women", "أطفال" to "Kids", "أحذية" to "Shoes", "شنط واكسسوارات" to "Bags & accessories",
     "إلكترونيات" to "Electronics", "موبايلات وتابلت" to "Phones & tablets", "لابتوب وكمبيوتر" to "Laptops & computers",
