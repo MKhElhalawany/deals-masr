@@ -68,6 +68,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.TextField
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -107,6 +109,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
 import java.net.URLEncoder
 
+private val AR_HEADERS = mapOf("Accept-Language" to "ar-SA,ar;q=0.9")   // SHEIN in Arabic
 private const val SHEIN_SA = "https://ar.shein.com/"   // SHEIN GCC storefront; the country is set to Saudi Arabia on the site
 private fun searchUrl(q: String) = "${SHEIN_SA}pdsearch/${URLEncoder.encode(q.trim(), "UTF-8").replace("+", "%20")}/"
 
@@ -218,6 +221,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var link by remember { mutableStateOf("") }
     var showLink by remember { mutableStateOf(false) }
+    var showHelp by rememberSaveable { mutableStateOf(true) }
     var loading by remember { mutableStateOf(false) }
     var product by remember { mutableStateOf<PageProduct?>(null) }
     var sheet by remember { mutableStateOf(false) }
@@ -240,7 +244,11 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             this.settings.javaScriptEnabled = true
             this.settings.domStorageEnabled = true
             this.settings.textZoom = 100
-            addJavascriptInterface(bridge, "DM")   // only "pickPhoto": SHEIN's camera button opens our photo search
+            this.settings.javaScriptCanOpenWindowsAutomatically = true
+            this.settings.mediaPlaybackRequiresUserGesture = false
+            // behave exactly like Chrome on this phone (SHEIN changes/limits features inside "app" web views)
+            this.settings.userAgentString = this.settings.userAgentString.replace("; wv)", ")").replace(Regex("Version/[\\d.]+ "), "")
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)   // SHEIN's photo search talks to its other domains
             val rewrites = HashMap<String, Int>()
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -263,7 +271,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                     chooser.launch("image/*"); return true
                 }
             }
-            loadUrl(SHEIN_SA)
+            loadUrl(SHEIN_SA, AR_HEADERS)
         }
     }
     // photo search: our free AI vision reads the photo → SHEIN's own search shows the matching products
@@ -315,7 +323,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
         }
     }
     BackHandler(enabled = web.canGoBack()) { web.goBack() }
-    fun open(url: String) { product = null; message = null; web.loadUrl(toSaudi(url)) }
+    fun open(url: String) { product = null; message = null; web.loadUrl(toSaudi(url), AR_HEADERS) }
 
     Scaffold(floatingActionButton = {
         FloatingActionButton(onClick = { openUrl(ctx, "https://wa.me/${settings?.whatsappNumber ?: "201050038728"}") },
@@ -351,6 +359,19 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                     if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = ""; showLink = false } else message = "ده مش لينك شي إن"
                 }) { Text("افتح") }
             }
+            // how it works, for customers (collapses to one line after "تمام")
+            if (showHelp) Surface(color = Gold.copy(alpha = 0.16f)) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Text("إزاي تطلب من شي إن السعودية؟", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall)
+                    Text("1) دوّر على المنتج في شي إن تحت بالكلام، أو بالصورة من أيقونة 🖼️ فوق، أو الصق لينك من 🔗.\n" +
+                        "2) افتح المنتج واختار اللون والمقاس والكمية زي ما بتعمل في شي إن بالظبط.\n" +
+                        "3) هيظهرلك تحت سعره بالجنيه لحد باب بيتك — من غير جمارك ولا مخاطرة.\n" +
+                        "4) دوس «اطلب ✓» واكتب اسمك وعنوانك ورقمك، وهنتواصل معاك واتساب.",
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { showHelp = false }, modifier = Modifier.align(Alignment.End)) { Text("تمام، فهمت") }
+                }
+            } else TextButton(onClick = { showHelp = true }, modifier = Modifier.fillMaxWidth().height(30.dp),
+                contentPadding = PaddingValues(0.dp)) { Text("❔ إزاي أطلب من شي إن؟", style = MaterialTheme.typography.labelMedium) }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             otherCurrency?.let { country ->
                 Surface(color = MaterialTheme.colorScheme.errorContainer) {
