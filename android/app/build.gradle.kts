@@ -14,8 +14,8 @@ android {
         applicationId = "com.dealsmasr.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "4.0.0"
+        versionCode = 17
+        versionName = "4.0.1"
         val apiBaseUrl = (project.findProperty("apiBaseUrl") as String?).orEmpty()
         buildConfigField("String", "DEFAULT_API_URL", "\"$apiBaseUrl\"")
         // Supabase project URL + public anon/publishable key (not secret; data is protected by RLS).

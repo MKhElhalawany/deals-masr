@@ -107,7 +107,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
 import java.net.URLEncoder
 
-private const val SHEIN_SA = "https://sa.shein.com/"   // the Saudi storefront (prices in riyals)
+private const val SHEIN_SA = "https://ar.shein.com/"   // SHEIN GCC storefront; the country is set to Saudi Arabia on the site
 private fun searchUrl(q: String) = "${SHEIN_SA}pdsearch/${URLEncoder.encode(q.trim(), "UTF-8").replace("+", "%20")}/"
 
 /** SHEIN Saudi main departments (opened as SHEIN's own pages, with SHEIN's filters). */
@@ -128,12 +128,12 @@ private val SHEIN_CATS: List<Triple<String, ImageVector, String>> = listOf(
     Triple("تخفيضات", Icons.Outlined.LocalOffer, "sale"),
 )
 
-/** Any SHEIN country link → the same page on the Saudi site. */
+/** Any SHEIN country link → the same page on SHEIN GCC (ar.shein.com, Saudi Arabia selected there). */
 internal fun toSaudi(url: String): String = runCatching {
     val u = Uri.parse(url)
     val h = u.host ?: return url
-    if (h == "sa.shein.com" || !Regex("^(www|ar|eg|bh|ae|kw|qa|om|en)\\.shein\\.com$").matches(h)) url
-    else u.buildUpon().authority("sa.shein.com").build().toString()
+    if (h == "ar.shein.com" || !Regex("^(www|sa|eg|bh|ae|kw|qa|om|en)\\.shein\\.com$").matches(h)) url
+    else u.buildUpon().authority("ar.shein.com").build().toString()
 }.getOrDefault(url)
 
 /** Opens SHEIN's own "search by photo" (the camera icon) so the picked photo is searched on SHEIN itself. */
@@ -154,7 +154,7 @@ private val READ_JS = """
     st.textContent='[class*="price"],[class*="Price"],[class*="discount-label"],[class*="download-banner"],[class*="app-download"],[class*="open-app"]{visibility:hidden!important}';
     (document.head||document.documentElement).appendChild(st);}
   var u=location.href, m=u.match(/-p-(\d{5,})/)||u.match(/goods_id=(\d{5,})/)||u.match(/\/goods\/(\d{5,})/);
-  if(!m) return JSON.stringify({page:'list'});
+  if(!m){var pe0=document.querySelector('[class*="price"]');return JSON.stringify({page:'list',cur:pe0?pe0.textContent.slice(0,30):''});}
   var gid=m[1];
   function num(t){if(!t)return null;var x=String(t).replace(/[٠-٩]/g,function(d){return '٠١٢٣٤٥٦٧٨٩'.indexOf(d)}).replace(/٫/g,'.').replace(/,/g,'').match(/\d+(\.\d+)?/);return x?parseFloat(x[0]):null;}
   var retail=null, sale=null, cur='';
@@ -172,7 +172,7 @@ private val READ_JS = """
     if(!el)return '';var im=el.querySelector('img');return ((im&&(im.alt||im.title))||el.getAttribute('aria-label')||el.title||el.textContent||'').trim().slice(0,40);}
   var t=(document.querySelector('h1')||{}).textContent||(document.querySelector('meta[property="og:title"]')||{}).content||'';
   var img=(document.querySelector('meta[property="og:image"]')||{}).content||'';
-  return JSON.stringify({page:'product',gid:gid,url:u.split('#')[0],title:t.trim().slice(0,200),image:img,retail:retail,sar:sar,egp:egp,
+  return JSON.stringify({page:'product',cur:String(cur).slice(0,30),gid:gid,url:u.split('#')[0],title:t.trim().slice(0,200),image:img,retail:retail,sar:sar,egp:egp,
     size:picked(/size/i),color:picked(/colou?r/i)});
 })()
 """.trimIndent()
@@ -207,6 +207,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     var sheet by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var pendingImage by remember { mutableStateOf<Uri?>(null) }
+    var otherCurrency by remember { mutableStateOf<String?>(null) }   // SHEIN opened on another GCC country
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
     // SHEIN asking for a file (its own photo search) with no photo picked from our button → let the user choose one
@@ -216,7 +217,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     val web = remember {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            setCookie("sa.shein.com", "currency=SAR; path=/")
+            setCookie("ar.shein.com", "currency=SAR; path=/")
         }
         WebView(ctx).apply {
             this.settings.javaScriptEnabled = true
@@ -272,10 +273,22 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     LaunchedEffect(web) {
         while (true) {
             web.evaluateJavascript(READ_JS) { r ->
-                product = runCatching {
-                    val inner = c.api.json.parseToJsonElement(r).jsonPrimitive.content
-                    parse(c.api.json.parseToJsonElement(inner).jsonObject)
+                val o = runCatching {
+                    c.api.json.parseToJsonElement(c.api.json.parseToJsonElement(r).jsonPrimitive.content).jsonObject
                 }.getOrNull()
+                product = o?.let { parse(it) }
+                val cur = o?.get("cur")?.jsonPrimitive?.contentOrNull.orEmpty()
+                otherCurrency = when {
+                    cur.isBlank() || Regex("ر\\.?\\s?س|SR|SAR|﷼", RegexOption.IGNORE_CASE).containsMatchIn(cur) -> null
+                    Regex("BHD|د\\.?\\s?ب").containsMatchIn(cur) -> "البحرين"
+                    Regex("AED|د\\.?\\s?إ").containsMatchIn(cur) -> "الإمارات"
+                    Regex("KWD|د\\.?\\s?ك").containsMatchIn(cur) -> "الكويت"
+                    Regex("QAR|ر\\.?\\s?ق").containsMatchIn(cur) -> "قطر"
+                    Regex("OMR|ر\\.?\\s?ع").containsMatchIn(cur) -> "عُمان"
+                    Regex("JOD|د\\.?\\s?أ").containsMatchIn(cur) -> "الأردن"
+                    Regex("EGP|ج\\.?\\s?م|E£").containsMatchIn(cur) -> "مصر"
+                    else -> null
+                }
             }
             delay(1000)
         }
@@ -345,6 +358,13 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                 }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            otherCurrency?.let { country ->
+                Surface(color = MaterialTheme.colorScheme.errorContainer) {
+                    Text("شي إن فاتحة على $country. افتح قايمة شي إن (☰) ← الدولة/المنطقة ← اختار «المملكة العربية السعودية» مرة واحدة بس، وبعدها كل الأسعار هتتحسب صح.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.fillMaxWidth().padding(10.dp))
+                }
+            }
             message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
             AndroidView({ web }, Modifier.weight(1f).fillMaxWidth())
             product?.let { p ->

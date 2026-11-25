@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.coroutines.Dispatchers
@@ -87,7 +86,7 @@ object JumiaWebView {
             }
         }
         view?.apply { stopLoading(); loadUrl("about:blank"); destroy() }
-        CookieManager.getInstance().removeAllCookies(null)
+        // cookies are kept (they also hold the user's SHEIN country choice in the in-app SHEIN browser)
         if (raw == null || raw == "null") return@withContext Result("error", emptyList(), emptyList(), "webview timeout")
         val o = runCatching { json.parseToJsonElement(json.parseToJsonElement(raw).jsonPrimitive.content).jsonObject }.getOrNull()
             ?: return@withContext Result("error", emptyList(), emptyList(), "webview parse")
