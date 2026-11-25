@@ -7,6 +7,7 @@ import { dealPushes, pushEnabled, toTokens } from "./push.ts";
 import { goodsId, parseShein } from "./shein.ts";
 import { categoryLinks, fingerprint, nextPage, Robots } from "./discover.ts";
 import { audit } from "../_shared/audit.ts";
+import { webOffers } from "../_shared/websearch.ts";
 import { parseTelegram } from "./telegram.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
@@ -419,6 +420,7 @@ Deno.serve(async (req) => {
     if (body.job === "order") out = await runOrder(String(body.id));
     else if (body.job === "probe") out = await probe(String(body.url));
     else if (body.job === "telegram") out = await runTelegram(String(body.channel ?? "deals_me"));
+    else if (body.job === "webcheck") out = { offers: await webOffers(String(body.q ?? ""), Number(body.price) || 0) };
     else if (body.job === "compare") out = await runCompare(String(body.q ?? "").slice(0, 120));
     else if (body.job === "audit") out = await runAudit(Math.min(60, Number(body.n) || 30));
     else if (body.job === "debug_url") {   // CI diagnostics: product data embedded in an allowlisted page (one request)

@@ -55,6 +55,8 @@ data class AppSettings(
     val celebrated: Set<String>,
     /** "ar" or "en" (app UI language) */
     val language: String = "ar",
+    /** notify about new posts in "عروض مجنونة" */
+    val crazyNotify: Boolean = true,
 ) {
     val hasServer get() = serverUrl.isNotBlank()
     val tiers: List<DealTier>
@@ -97,6 +99,8 @@ class SettingsStore(private val context: Context, private val json: Json) {
         val lastFullSync = longPreferencesKey("deals_last_full_sync_v2")
         val language = stringPreferencesKey("ui_language")
         val interests = stringPreferencesKey("learned_interests")
+        val crazyNotify = booleanPreferencesKey("crazy_notify")
+        val crazySeen = longPreferencesKey("crazy_last_seen")
     }
 
     val settings: Flow<AppSettings> = context.dataStore.data.map { p -> p.toSettings() }
@@ -123,6 +127,7 @@ class SettingsStore(private val context: Context, private val json: Json) {
         phoneAssist = this[K.phoneAssist] ?: true,
         adminMode = this[K.admin] ?: false,
         language = if (this[K.language] == "en") "en" else "ar",
+        crazyNotify = this[K.crazyNotify] ?: true,
         celebrated = (this[K.celebrated] ?: "").split(",").filter { it.isNotBlank() }.toSet(),
         extraPages = (this[K.extraPages] ?: "").split("\n").map { it.trim() }.filter { it.startsWith("http") },
     )
@@ -152,6 +157,9 @@ class SettingsStore(private val context: Context, private val json: Json) {
     suspend fun setLiveScan(v: Boolean) = context.dataStore.edit { it[K.live] = v }
     suspend fun setLiveInterval(v: Int) = context.dataStore.edit { it[K.liveInterval] = v }
     suspend fun setLiveWifiOnly(v: Boolean) = context.dataStore.edit { it[K.wifiOnly] = v }
+    suspend fun setCrazyNotify(v: Boolean) = context.dataStore.edit { it[K.crazyNotify] = v }
+    suspend fun crazySeen(): Long = context.dataStore.data.first()[K.crazySeen] ?: 0L
+    suspend fun setCrazySeen(v: Long) = context.dataStore.edit { it[K.crazySeen] = v }
     suspend fun setLanguage(v: String) = context.dataStore.edit { it[K.language] = if (v == "en") "en" else "ar" }
     /** learned interest weights (JSON map "kind:value" → score), kept only on this phone */
     suspend fun interests(): String = context.dataStore.data.first()[K.interests].orEmpty()

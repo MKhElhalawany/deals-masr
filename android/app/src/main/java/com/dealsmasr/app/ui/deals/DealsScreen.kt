@@ -53,7 +53,7 @@ val STORES = listOf("amazon" to "أمازون", "noon" to "نون", "townteam" t
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DealsScreen(initialTier: String?, onProduct: (String) -> Unit, onSettings: () -> Unit) {
+fun DealsScreen(initialTier: String?, onCrazy: () -> Unit = {}, onProduct: (String) -> Unit, onSettings: () -> Unit) {
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshIfStale() }
@@ -105,6 +105,11 @@ fun DealsScreen(initialTier: String?, onProduct: (String) -> Unit, onSettings: (
                 }
             }
             LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    androidx.compose.material3.AssistChip(onClick = onCrazy, label = { Text("🔥 عروض مجنونة", fontWeight = androidx.compose.ui.text.font.FontWeight.Bold) },
+                        colors = androidx.compose.material3.AssistChipDefaults.assistChipColors(containerColor = androidx.compose.ui.graphics.Color(0xFFB3123A),
+                            labelColor = androidx.compose.ui.graphics.Color.White))
+                }
                 item { FilterChip(selected = stores.isEmpty(), onClick = { stores = emptySet() }, label = { Text("كل المتاجر") }) }
                 items(STORES) { (id, name) ->
                     FilterChip(selected = id in stores, onClick = { stores = if (id in stores) stores - id else stores + id },

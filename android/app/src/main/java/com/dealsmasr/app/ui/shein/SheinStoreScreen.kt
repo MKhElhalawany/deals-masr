@@ -2,11 +2,18 @@ package com.dealsmasr.app.ui.shein
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.Uri
 import android.webkit.CookieManager
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +44,7 @@ import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.FitnessCenter
 import androidx.compose.material.icons.outlined.Headphones
 import androidx.compose.material.icons.outlined.Hiking
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.Man
@@ -99,7 +107,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.math.BigDecimal
 import java.net.URLEncoder
 
-private const val SHEIN_SA = "https://ar.shein.com/"
+private const val SHEIN_SA = "https://sa.shein.com/"   // the Saudi storefront (prices in riyals)
 private fun searchUrl(q: String) = "${SHEIN_SA}pdsearch/${URLEncoder.encode(q.trim(), "UTF-8").replace("+", "%20")}/"
 
 /** SHEIN Saudi main departments (opened as SHEIN's own pages, with SHEIN's filters). */
@@ -119,6 +127,21 @@ private val SHEIN_CATS: List<Triple<String, ImageVector, String>> = listOf(
     Triple("حيوانات أليفة", Icons.Outlined.Pets, "pet supplies"),
     Triple("تخفيضات", Icons.Outlined.LocalOffer, "sale"),
 )
+
+/** Any SHEIN country link → the same page on the Saudi site. */
+internal fun toSaudi(url: String): String = runCatching {
+    val u = Uri.parse(url)
+    val h = u.host ?: return url
+    if (h == "sa.shein.com" || !Regex("^(www|ar|eg|bh|ae|kw|qa|om|en)\\.shein\\.com$").matches(h)) url
+    else u.buildUpon().authority("sa.shein.com").build().toString()
+}.getOrDefault(url)
+
+/** Opens SHEIN's own "search by photo" (the camera icon) so the picked photo is searched on SHEIN itself. */
+private val CAMERA_JS = """
+(function(){var s=['[class*="camera"]','[aria-label*="camera" i]','[class*="image-search"]','[class*="imageSearch"]','[class*="pic-search"]','[class*="picSearch"]','[class*="search-img"]'];
+ for(var i=0;i<s.length;i++){var e=document.querySelector(s[i]);if(e){e.click();return 'clicked';}}
+ var f=document.querySelector('input[type=file]'); if(f){f.click();return 'input';} return 'none';})()
+""".trimIndent()
 
 /**
  * Reads the page the user is looking at: hides SHEIN's own (riyal) prices so only our Egyptian price shows, and on a
@@ -177,32 +200,73 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     val cfg = settings?.pricing ?: SheinPricingConfig()
     var query by remember { mutableStateOf("") }
     var link by remember { mutableStateOf("") }
+    var showLink by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
+    var header by remember { mutableStateOf(true) }
     var product by remember { mutableStateOf<PageProduct?>(null) }
     var sheet by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
+    var pendingImage by remember { mutableStateOf<Uri?>(null) }
+    var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
 
+    // SHEIN asking for a file (its own photo search) with no photo picked from our button → let the user choose one
+    val chooser = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        fileCallback?.onReceiveValue(uri?.let { arrayOf(it) }); fileCallback = null
+    }
     val web = remember {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
-            // ask SHEIN for the Saudi storefront in riyals
-            setCookie(".shein.com", "currency=SAR; path=/"); setCookie("ar.shein.com", "currency=SAR; path=/")
+            setCookie("sa.shein.com", "currency=SAR; path=/")
         }
         WebView(ctx).apply {
             this.settings.javaScriptEnabled = true
             this.settings.domStorageEnabled = true
-            this.settings.loadWithOverviewMode = true
-            this.settings.useWideViewPort = true
+            this.settings.textZoom = 100
+            val rewrites = HashMap<String, Int>()
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val u = request.url
-                    // stay on SHEIN pages; app-store / deep links are ignored
-                    return !(u.scheme == "https" && (u.host ?: "").let { it.endsWith("shein.com") || it.endsWith("shein.top") })
+                    val host = u.host ?: ""
+                    if (u.scheme != "https" || !(host.endsWith("shein.com") || host.endsWith("shein.top"))) return true   // no app-store / deep links
+                    val sa = toSaudi(u.toString())
+                    if (request.isForMainFrame && sa != u.toString() && (rewrites.merge(sa, 1, Int::plus) ?: 0) <= 2) {
+                        view.loadUrl(sa); return true   // keep the user on the Saudi store (riyal prices)
+                    }
+                    return false
                 }
                 override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) { loading = true }
                 override fun onPageFinished(view: WebView, url: String?) { loading = false }
             }
+            webChromeClient = object : WebChromeClient() {
+                override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                    val img = pendingImage
+                    if (img != null) { pendingImage = null; callback.onReceiveValue(arrayOf(img)); return true }
+                    fileCallback?.onReceiveValue(null); fileCallback = callback
+                    chooser.launch("image/*"); return true
+                }
+            }
+            setOnScrollChangeListener { _, _, y, _, oldY ->
+                if (y > oldY + 12 && y > 120) header = false else if (y < oldY - 12 || y < 40) header = true
+            }
             loadUrl(SHEIN_SA)
+        }
+    }
+    // photo search: pick a photo, open SHEIN's own camera search and hand it the photo
+    val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        pendingImage = uri; product = null; header = true
+        web.loadUrl(SHEIN_SA)
+        scope.launch {
+            repeat(12) {
+                delay(1000)
+                if (pendingImage == null) return@launch          // SHEIN took the photo
+                web.evaluateJavascript(CAMERA_JS, null)
+            }
+            pendingImage?.let { u ->   // SHEIN's photo search didn't open → our team finds it from the photo
+                pendingImage = null
+                c.shein.addByImage(u, null)
+                message = "بعتنا الصورة لفريقنا يدوّر عليها في شي إن ويسعّرها — هتلاقيها في السلة"
+            }
         }
     }
     LaunchedEffect(web) {
@@ -217,82 +281,88 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
         }
     }
     BackHandler(enabled = web.canGoBack()) { web.goBack() }
-    fun open(url: String) { product = null; web.loadUrl(url) }
+    fun open(url: String) { product = null; message = null; web.loadUrl(toSaudi(url)) }
 
     Scaffold(floatingActionButton = {
         FloatingActionButton(onClick = { openUrl(ctx, "https://wa.me/${settings?.whatsappNumber ?: "201050038728"}") },
             containerColor = Color(0xFF25D366), contentColor = Color.White, shape = CircleShape,
-            modifier = Modifier.padding(bottom = if (product != null) 120.dp else 0.dp)) {
+            modifier = Modifier.padding(bottom = if (product != null) 130.dp else 0.dp)) {
             Icon(Icons.AutoMirrored.Outlined.Chat, "واتساب")
         }
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            // brand header
-            Box(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF070D1F), Color(0xFF1B2D5C))))
-                .padding(horizontal = 14.dp, vertical = 10.dp)) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("SHEIN × عروض مصر", color = Gold, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleLarge,
-                            modifier = Modifier.weight(1f))
+            AnimatedVisibility(visible = header) {
+                Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFF070D1F), Color(0xFF1B2D5C))))) {
+                    Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("SHEIN × عروض مصر", color = Gold, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
+                            Text("منتجات شي إن لحد باب بيتك · 0 جمارك · 0 مخاطرة · خصومات لحد 80%", color = Color.White,
+                                style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                        }
                         IconButton(onClick = onCart) {
                             BadgedBox(badge = { if (cart.isNotEmpty()) Badge { Text("${cart.size}") } }) {
                                 Icon(Icons.Outlined.ShoppingCart, "السلة", tint = Color.White)
                             }
                         }
                     }
-                    Text("عروض مصر بتوفرلك منتجات شي إن لحد باب بيتك", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                    Text("0 جمارك · 0 مخاطرة · أسرع وقت · خصومات لحد 80%", color = Gold, style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold)
-                }
-            }
-            // search + link
-            TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp).clip(RoundedCornerShape(24.dp)),
-                placeholder = { Text("دوّر في شي إن… فستان، جزمة، شنطة") }, singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) open(searchUrl(query)) }),
-                colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(link, { link = it }, Modifier.weight(1f), singleLine = true,
-                    placeholder = { Text("أو الصق لينك منتج من شي إن") }, leadingIcon = { Icon(Icons.Outlined.Link, null) },
-                    shape = RoundedCornerShape(20.dp))
-                Spacer(Modifier.width(6.dp))
-                Button(onClick = {
-                    val u = SheinLink.firstUrl(link)
-                    if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = "" } else message = "ده مش لينك شي إن"
-                }) { Text("افتح") }
-            }
-            if (product == null) LazyRow(contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(SHEIN_CATS.size) { i ->
-                    val (label, icon, q) = SHEIN_CATS[i]
-                    Column(Modifier.width(72.dp).clip(RoundedCornerShape(14.dp)).clickable { open(searchUrl(q)) }.padding(4.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(Modifier.size(48.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape), contentAlignment = Alignment.Center) {
-                            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                    TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).clip(RoundedCornerShape(24.dp)),
+                        placeholder = { Text("دوّر في شي إن… فستان، جزمة، شنطة") }, singleLine = true,
+                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                        trailingIcon = {
+                            Row {
+                                IconButton(onClick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                                    Icon(Icons.Outlined.Image, "ابحث بالصورة")
+                                }
+                                IconButton(onClick = { showLink = !showLink }) { Icon(Icons.Outlined.Link, "لينك منتج") }
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) open(searchUrl(query)) }),
+                        colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
+                    if (showLink) Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(link, { link = it }, Modifier.weight(1f), singleLine = true,
+                            placeholder = { Text("الصق لينك منتج من شي إن", color = Color.White.copy(alpha = 0.7f)) },
+                            shape = RoundedCornerShape(20.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Button(onClick = {
+                            val u = SheinLink.firstUrl(link)
+                            if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = ""; showLink = false } else message = "ده مش لينك شي إن"
+                        }) { Text("افتح") }
+                    }
+                    if (product == null) LazyRow(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        items(SHEIN_CATS.size) { i ->
+                            val (label, icon, q) = SHEIN_CATS[i]
+                            Column(Modifier.width(66.dp).clip(RoundedCornerShape(14.dp)).clickable { open(searchUrl(q)) }.padding(2.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(Modifier.size(42.dp).background(Gold.copy(alpha = 0.18f), CircleShape), contentAlignment = Alignment.Center) {
+                                    Icon(icon, null, tint = Gold)
+                                }
+                                Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White, maxLines = 1)
+                            }
                         }
-                        Text(label, style = MaterialTheme.typography.labelSmall, maxLines = 2)
                     }
                 }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-            message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp)) }
+            message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
             AndroidView({ web }, Modifier.weight(1f).fillMaxWidth())
             product?.let { p ->
                 val each = p.retailSar?.takeIf { p.currencyOk }?.let { SheinPricing.line(BigDecimal(it.toString()), 1, cfg).lineTotalEgp }
                 Surface(tonalElevation = 6.dp, shadowElevation = 8.dp) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(p.title, maxLines = 1, style = MaterialTheme.typography.labelMedium)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 if (each != null) {
-                                    Text("هنوصلهولك لمصر بـ", style = MaterialTheme.typography.labelSmall)
-                                    Text(Money.egp(each), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black,
+                                    Text("السعر لحد باب بيتك", style = MaterialTheme.typography.labelMedium)
+                                    Text(Money.egp(each), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black,
                                         color = MaterialTheme.colorScheme.primary)
-                                } else Text("اختار المنتج وإحنا هنسعّره لك", style = MaterialTheme.typography.bodySmall)
+                                } else Text("اختار المنتج وإحنا هنسعّره لك", style = MaterialTheme.typography.bodyMedium)
                             }
-                            Button(onClick = { sheet = true }, modifier = Modifier.height(48.dp)) { Text("اطلب ✓") }
+                            Button(onClick = { sheet = true }, modifier = Modifier.height(52.dp)) { Text("اطلب ✓", style = MaterialTheme.typography.titleMedium) }
                         }
+                        if (cfg.deliveryFeeEgp.signum() > 0) Text("+ ${Money.egp(cfg.deliveryFeeEgp)} مصاريف شحن مرة واحدة للطلب كله",
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -318,8 +388,12 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                     Text("  $qty  ", fontWeight = FontWeight.Bold)
                     OutlinedButton(onClick = { if (qty < 20) qty++ }) { Text("+") }
                 }
-                unit?.let { Text("هنوصلهولك لمصر بـ ${Money.egp(SheinPricing.line(BigDecimal(it.toString()), qty, cfg).lineTotalEgp)}",
-                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary) }
+                unit?.let {
+                    Text("لحد باب بيتك: ${Money.egp(SheinPricing.line(BigDecimal(it.toString()), qty, cfg).lineTotalEgp)}",
+                        style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                    if (cfg.deliveryFeeEgp.signum() > 0) Text("+ ${Money.egp(cfg.deliveryFeeEgp)} مصاريف شحن مرة واحدة للطلب",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 Button(onClick = {
                     busy = true
                     scope.launch {
@@ -331,7 +405,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                             else -> if (unit != null) onCheckout() else onCart()
                         }
                     }
-                }, enabled = !busy && (size.isNotBlank() || p.size.isBlank()), modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                     Text(if (busy) "لحظة…" else "كمّل الطلب (الاسم والعنوان والموبايل)")
                 }
                 Spacer(Modifier.height(12.dp))

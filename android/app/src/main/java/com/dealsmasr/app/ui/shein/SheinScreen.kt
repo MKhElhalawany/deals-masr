@@ -329,11 +329,11 @@ fun BreakdownRows(
         Line("أدمن: إضافة $extraPct%", Money.egp(extra))
     }
     if (fee.signum() != 0) {
-        Line("سعر المنتجات", Money.egp(subtotal))
-        Line("التوصيل لحد باب البيت", Money.egp(fee))
+        Line("سعر المنتجات لحد باب البيت", Money.egp(subtotal))
+        Line("مصاريف الشحن (مرة واحدة للطلب)", Money.egp(fee))
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
     }
-    Line("هنوصلهولك لحد باب بيتك بـ", Money.egp(total), bold = true)
+    Line("الإجمالي لحد باب بيتك", Money.egp(total), bold = true)
 }
 
 @Composable

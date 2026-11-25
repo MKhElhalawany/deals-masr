@@ -23,6 +23,21 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Checkroom
+import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Face
+import androidx.compose.material.icons.outlined.FitnessCenter
+import androidx.compose.material.icons.outlined.Kitchen
+import androidx.compose.material.icons.outlined.LocalLaundryService
+import androidx.compose.material.icons.automirrored.outlined.MenuBook
+import androidx.compose.material.icons.outlined.Pets
+import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material.icons.outlined.Toys
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -83,26 +98,32 @@ val CATEGORY_MENU: List<Pair<String, List<String>>> = listOf(
     "حيوانات أليفة" to listOf("مستلزمات"),
 )
 
+private val CATEGORY_ICONS: Map<String, androidx.compose.ui.graphics.vector.ImageVector> = mapOf(
+    "ملابس" to Icons.Outlined.Checkroom, "إلكترونيات" to Icons.Outlined.Devices, "أجهزة منزلية" to Icons.Outlined.LocalLaundryService,
+    "البيت والمطبخ" to Icons.Outlined.Kitchen, "جمال وعناية" to Icons.Outlined.Face, "صحة ورياضة" to Icons.Outlined.FitnessCenter,
+    "أطفال ولعب" to Icons.Outlined.Toys, "سوبرماركت" to Icons.Outlined.ShoppingCart, "عربيات" to Icons.Outlined.DirectionsCar,
+    "كتب ومكتبة" to Icons.AutoMirrored.Outlined.MenuBook, "حيوانات أليفة" to Icons.Outlined.Pets,
+)
+private val CATEGORY_COLORS: Map<String, Color> = mapOf(
+    "ملابس" to Color(0xFFB0185E), "إلكترونيات" to Color(0xFF1E5BD8), "أجهزة منزلية" to Color(0xFF00897B), "البيت والمطبخ" to Color(0xFFE07B00),
+    "جمال وعناية" to Color(0xFFD81B60), "صحة ورياضة" to Color(0xFF2E7D32), "أطفال ولعب" to Color(0xFF8E24AA), "سوبرماركت" to Color(0xFF6D4C41),
+    "عربيات" to Color(0xFF37474F), "كتب ومكتبة" to Color(0xFF5D4037), "حيوانات أليفة" to Color(0xFFF4511E),
+)
+
 @Composable
-fun AppDrawerContent(onCategory: (String) -> Unit, onCrazy: (Int) -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
+fun AppDrawerContent(onCategory: (String) -> Unit, onFavorites: () -> Unit, onSettings: () -> Unit) {
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) {
         Text("الأقسام", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black,
             color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
-        NavigationDrawerItem(label = { Text("🔥 عروض مجنونة") }, selected = false, onClick = { onCrazy(0) },
-            icon = { Icon(Icons.Outlined.Bolt, null) }, modifier = Modifier.padding(horizontal = 12.dp))
-        NavigationDrawerItem(label = { Text("🎟️ كوبونات") }, selected = false, onClick = { onCrazy(1) },
-            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
-        NavigationDrawerItem(label = { Text("1+1 اشتري واحد والتاني هدية") }, selected = false, onClick = { onCrazy(2) },
-            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
-        NavigationDrawerItem(label = { Text("🍔 مطاعم وأكل") }, selected = false, onClick = { onCrazy(3) },
-            icon = { Icon(Icons.Outlined.LocalOffer, null) }, modifier = Modifier.padding(horizontal = 12.dp))
-        HorizontalDivider(Modifier.padding(vertical = 8.dp))
         CATEGORY_MENU.forEach { (main, subs) ->
             NavigationDrawerItem(
                 label = { Text(main, fontWeight = FontWeight.SemiBold) }, selected = open == main,
                 onClick = { open = if (open == main) null else main },
-                icon = { Icon(Icons.Outlined.LocalOffer, null) },
+                icon = {
+                    androidx.compose.foundation.layout.Box(Modifier.size(36.dp).background(CATEGORY_COLORS[main] ?: Color(0xFF546E7A), CircleShape),
+                        contentAlignment = Alignment.Center) { Icon(CATEGORY_ICONS[main] ?: Icons.Outlined.LocalOffer, null, tint = Color.White, modifier = Modifier.size(20.dp)) }
+                },
                 badge = { Icon(if (open == main) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null) },
                 modifier = Modifier.padding(horizontal = 12.dp),
             )
@@ -149,7 +170,7 @@ fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> 
                 items.isEmpty() && loading -> SkeletonGrid()
                 items.isEmpty() && error != null -> ErrorState(error!!, { scope.launch { load() } })
                 items.isEmpty() -> MessageState(Icons.Outlined.LocalOffer, "مفيش عروض في القسم ده دلوقتي",
-                    "الذكاء الاصطناعي بيصنّف العروض أول بأول، ارجع بعد شوية")
+                    "أول ما ينزل عرض جديد هيظهر هنا")
                 else -> LazyVerticalGrid(GridCells.Adaptive(160.dp), contentPadding = PaddingValues(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(items, key = { it.id }) { d ->

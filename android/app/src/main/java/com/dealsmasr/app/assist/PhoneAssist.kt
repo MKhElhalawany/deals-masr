@@ -39,7 +39,7 @@ object PhoneAssist {
 
     /** One assist step; returns a short status for logs, or null when nothing was done. */
     suspend fun step(ctx: Context, c: AppContainer): String? = withContext(Dispatchers.IO) {
-        if (!c.auth.isSignedIn || !c.settings.current().phoneAssist || !onWifi(ctx)) return@withContext null
+        if (!c.auth.isSignedIn || !onWifi(ctx)) return@withContext null   // always on (owner decision 2026-11-25), Wi-Fi only
         val claim = runCatching {
             c.api.json.parseToJsonElement(c.supabase.rpcWith("claim_phone_target", buildJsonObject { put("p_store", "jumia") })).jsonArray
         }.getOrNull()?.firstOrNull()?.jsonObject ?: return@withContext null

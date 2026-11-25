@@ -99,19 +99,13 @@ fun SettingsScreen(onBack: () -> Unit, onAdminOrders: () -> Unit = {}) {
                             label = { Text("$p%+") })
                     }
                 }
+                Toggle("🔥 إشعارات العروض المجنونة", st.crazyNotify) { on -> scope.launch { c.settings.setCrazyNotify(on) } }
                 Text("العروض بيتابعها سيرفرنا 24 ساعة. 10–29% إشعار هادي · 30%+ 🔥 · 50%+ ⚡ · 70%+ 🚨 «الحق!»",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 val live by c.realtime.connected.collectAsState()
                 Text(
                     (if (live) "🟢 متصل مباشرة — العروض بتظهر أول ما السيرفر يلاقيها" else "⚪ الاتصال المباشر مقفول — بنحدّث كل دقيقة") + "\n" +
                         (if (com.dealsmasr.app.push.Push.configured) "🔔 إشعارات فورية حتى والتطبيق مقفول" else "🔕 الإشعارات الفورية والتطبيق مقفول لسه مش متفعّلة (بنشيّك كل 15 دقيقة)"),
-                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Section("ساعد في تحديث العروض") {
-                Toggle("خلي موبايلي يساعد في قراية عروض جوميا (واي فاي بس، والأبليكيشن مفتوح)", st.phoneAssist) { on ->
-                    scope.launch { c.settings.setPhoneAssist(on) }
-                }
-                Text("جوميا بتحجب السيرفرات. الموبايل بيقرا صفحة واحدة كل دقيقة على الأكتر من قايمة السيرفر، ومابيستهلكش باقة الموبايل.",
                     style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Section("اللغة") {

@@ -6,6 +6,7 @@ import { gemini, geminiConfigured, type Turn } from "../_shared/gemini.ts";
 import { dictTranslate, hasArabic, maxPriceOf, normalize, similarity, titleTokens, words } from "./text.ts";
 import { Robots } from "../_shared/robots.ts";
 import { audit } from "../_shared/audit.ts";
+import { webOffers } from "../_shared/websearch.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!.replace(/\/$/, "");
 const KEY = Deno.env.get("SERVICE_KEY") || Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -126,7 +127,8 @@ async function verify(dealId: string) {
     const rows = await rest("GET", `deals?select=id,store_id,title,url,current_price,image_url,last_checked&id=neq.${enc(dealId)}&last_checked=gt.${enc(new Date(Date.now() - 14 * 86400_000).toISOString())}&and=(${toks.slice(0, 2).map(ilikeWord).join(",")})&order=current_price.asc&limit=25`).catch(() => []);
     pool = rows.map((o: any) => ({ id: o.id, store: o.store_id, title: o.title, url: o.url, price: Number(o.current_price), image_url: o.image_url }));
   }
-  const live = await liveOffers(words(d.title).slice(0, 6).join(" "));
+  const [live, web] = await Promise.all([liveOffers(words(d.title).slice(0, 6).join(" ")), webOffers(d.title.slice(0, 150), price)]);
+  for (const o of web) if (!pool.some((p) => p.url === o.url) && o.url !== d.url) pool.push(o);
   for (const o of live) if (!pool.some((p) => p.url === o.url) && o.url !== d.url) pool.push(o);
   const matches = await sameProduct(d.title, price, pool.slice(0, 40));
   const cheapest = matches.length ? matches.reduce((a, b) => (b.price < a.price ? b : a)) : null;

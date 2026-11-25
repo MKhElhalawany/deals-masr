@@ -157,6 +157,7 @@ create trigger call_scan after insert or update of status on public.orders for e
     # Phase 0: once a day (03:17 Cairo = 01:17 UTC) price history older than 90 days → one row per product per day
     S.sql(ref, "select cron.schedule('audit-deals', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"audit\"}'::jsonb)$c$)")
     S.sql(ref, "select cron.schedule('telegram-deals-me', '*/3 * * * *', $c$select app_private.call_scan('{\"job\":\"telegram\",\"channel\":\"deals_me\"}'::jsonb)$c$)")
+    S.sql(ref, "select cron.schedule('categorize-deals', '*/5 * * * *', $c$select public.categorize_by_keywords(5000)$c$)")
     S.sql(ref, "select cron.schedule('compact-price-history', '17 1 * * *', $c$select public.compact_price_history(90)$c$)")
     jobs = S.sql(ref, "select jobname, schedule from cron.job where jobname like 'scan-%' order by 1") or []
     print("cron jobs:", ", ".join(f"{j['jobname']} ({j['schedule']})" for j in jobs))
@@ -237,11 +238,12 @@ create trigger call_scan after insert or update of status on public.orders for e
             OUT.append(f"- {str(when)[11:19]} UTC — {msg}")
     except Exception as e:
         OUT.append(f"\n(قياس قاعدة البيانات فشل: {e})")
-    for job in ({"job": "audit", "n": 5}, {"job": "compare", "q": "philips air fryer"}):   # health of the AI audit + live compare
+    for job in ({"job": "audit", "n": 5}, {"job": "compare", "q": "philips air fryer"},
+                {"job": "webcheck", "q": "Samsung 50 inch Crystal UHD U8000H", "price": 18499}):   # health of the AI audit + live compare
         try:
             r = c.post(f"{url}/functions/v1/scan", headers={"x-cron-secret": cron_secret}, json=job, timeout=90)
             body = r.text
-            if job["job"] == "compare":
+            if job["job"] in ("compare", "webcheck"):
                 offers = r.json().get("offers", [])
                 body = f"{len(offers)} offers, e.g. " + json.dumps([[o["title"][:50], o["price"]] for o in offers[:4]], ensure_ascii=False)
             print(f"::group::{job['job']} check (HTTP {r.status_code})\n{body[:1500]}\n::endgroup::")

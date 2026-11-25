@@ -18,6 +18,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.dealsmasr.app.AppContainer
 import com.dealsmasr.app.DealsApp
 import com.dealsmasr.app.MainActivity
 import com.dealsmasr.app.R
@@ -85,12 +86,26 @@ class DealRefreshWorker(ctx: Context, params: WorkerParameters) : CoroutineWorke
                         n.dealId?.let { "product/$it" })
                 }
             }
+            if (s.notificationsEnabled && s.crazyNotify) runCatching { crazyDeals(c) }
             runCatching { OrderEvents.check(applicationContext, c) }
             Result.success()
         } catch (e: Exception) {
             if (runAttemptCount < 3) Result.retry() else Result.failure()
         }
     }
+}
+
+/** New posts in "عروض مجنونة" since the last check → one notification each (max 3), newest first. */
+private suspend fun CoroutineWorker.crazyDeals(c: AppContainer) {
+    val seen = c.settings.crazySeen()
+    val posts = c.deals.crazyPosts()
+    val top = posts.firstOrNull()?.id ?: return
+    if (seen == 0L) { c.settings.setCrazySeen(top); return }   // first run: don't flood with old posts
+    posts.filter { it.id > seen }.take(3).forEach { p ->
+        Notifier.show(applicationContext, ("tg" + p.id).hashCode(), Notifier.CH_DEALS, "🔥 عرض مجنون جديد",
+            p.text.lineSequence().firstOrNull { it.isNotBlank() }?.take(120) ?: "عرض جديد", "crazy?f=0")
+    }
+    c.settings.setCrazySeen(top)
 }
 
 /** Daily: sync order statuses and fire countdown milestone notifications. */

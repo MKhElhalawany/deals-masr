@@ -289,7 +289,7 @@ fun VerifyDeal(id: String) {
                 style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             r.cheaper?.let { ch ->
                 Button(onClick = { openUrl(ctx, ch.url) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("أرخص على ${r.cheaperStore}: ${Money.egp(ch.currentPrice)}")
+                    Text("لقينا أرخص على ${r.cheaperStore}: ${Money.egp(ch.currentPrice)} — اشتري من هنا ←")
                 }
             }
             if (!r.ai) Text("الحكم محسوب من بياناتنا مباشرة.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

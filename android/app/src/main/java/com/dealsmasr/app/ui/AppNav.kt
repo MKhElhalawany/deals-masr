@@ -99,7 +99,6 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
             ModalDrawerSheet {
                 com.dealsmasr.app.ui.browse.AppDrawerContent(
                     onCategory = { fromDrawer("category/${URLEncoder.encode(it, "UTF-8")}") },
-                    onCrazy = { fromDrawer("crazy?f=$it") },
                     onFavorites = { fromDrawer("favorites") },
                     onSettings = { fromDrawer("settings") },
                 )
@@ -132,6 +131,7 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                     onFavorites = { nav.navigate("favorites") },
                     onSettings = { nav.navigate("settings") },
                     onMenu = { scope.launch { drawer.open() } },
+                    onCrazy = { nav.navigate("crazy?f=0") },
                 )
             }
             composable("category/{c}") { e ->
@@ -143,6 +143,7 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
             }
             composable("deals?tier={tier}", arguments = listOf(navArgument("tier") { type = NavType.StringType; nullable = true; defaultValue = null })) { e ->
                 DealsScreen(
+                    onCrazy = { nav.navigate("crazy?f=0") },
                     initialTier = e.arguments?.getString("tier")?.ifBlank { null },
                     onProduct = { nav.navigate("product/${URLEncoder.encode(it, "UTF-8")}") },
                     onSettings = { nav.navigate("settings") },

@@ -29,13 +29,14 @@ async function models(): Promise<string[]> {
 
 export type Turn = { role: "user" | "model"; text: string };
 
-export async function gemini(system: string, turns: Turn[], opts: { json?: boolean; maxTokens?: number; temperature?: number } = {}):
+export async function gemini(system: string, turns: Turn[], opts: { json?: boolean; maxTokens?: number; temperature?: number; search?: boolean } = {}):
   Promise<{ text: string; model: string } | null> {
   if (!geminiConfigured()) return null;
   let list: string[] = [];
   try { list = await models(); } catch (e) { console.warn("models", String(e)); }
   for (const m of list) {
     if ((resting.get(m) ?? 0) > Date.now()) continue;
+    if (opts.search && /gemma/.test(m)) continue;   // web search only on Gemini models
     const gemma = /gemma/.test(m);
     // Gemma has no system field / JSON mode: the instructions go first in the conversation
     const contents = turns.map((t, i) => ({ role: t.role, parts: [{ text: gemma && i === 0 ? `${system}\n\n${t.text}` +
@@ -43,8 +44,9 @@ export async function gemini(system: string, turns: Turn[], opts: { json?: boole
     const body: Record<string, unknown> = {
       contents,
       generationConfig: { temperature: opts.temperature ?? 0.4, maxOutputTokens: opts.maxTokens ?? 700,
-        ...(opts.json && !gemma ? { responseMimeType: "application/json" } : {}) },
+        ...(opts.json && !gemma && !opts.search ? { responseMimeType: "application/json" } : {}) },
     };
+    if (opts.search) body.tools = [{ google_search: {} }];   // Google Search grounding (free daily allowance)
     if (!gemma) body.systemInstruction = { parts: [{ text: system }] };
     try {
       const r = await fetch(`${BASE}/${m}:generateContent?key=${KEY}`, { method: "POST", signal: AbortSignal.timeout(25_000),

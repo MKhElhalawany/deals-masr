@@ -6,17 +6,17 @@ import java.text.DecimalFormat
 import java.text.DecimalFormatSymbols
 import java.util.Locale
 
-/** Final = (SAR original price × rate × multiplier) summed over items + delivery fee ONCE per order (now 0: included). */
+/** Final = (SAR original price × rate × multiplier) summed over items + delivery fee ONCE per order (130 EGP shipping). */
 data class SheinPricingConfig(
-    val sarToEgp: BigDecimal = BigDecimal("14.5"),
+    val sarToEgp: BigDecimal = BigDecimal("14"),
     val multiplier: BigDecimal = BigDecimal("1.20"),
-    val deliveryFeeEgp: BigDecimal = BigDecimal.ZERO,
+    val deliveryFeeEgp: BigDecimal = BigDecimal("130"),
 ) {
     companion object {
         fun of(rate: String?, multiplier: String?, fee: String?) = SheinPricingConfig(
-            rate?.toBigDecimalOrNull() ?: BigDecimal("14.5"),
+            rate?.toBigDecimalOrNull() ?: BigDecimal("14"),
             multiplier?.toBigDecimalOrNull() ?: BigDecimal("1.20"),
-            fee?.toBigDecimalOrNull() ?: BigDecimal.ZERO,
+            fee?.toBigDecimalOrNull() ?: BigDecimal("130"),
         )
     }
 }

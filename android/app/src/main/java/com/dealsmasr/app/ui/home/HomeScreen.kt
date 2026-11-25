@@ -126,6 +126,7 @@ fun HomeScreen(
     onFavorites: () -> Unit,
     onSettings: () -> Unit,
     onMenu: () -> Unit,
+    onCrazy: () -> Unit = {},
 ) {
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
@@ -174,7 +175,7 @@ fun HomeScreen(
                                 modifier = Modifier.padding(horizontal = 16.dp))
                         }
                         if (forYou.isNotEmpty()) {
-                            item(key = "h_foryou") { SectionHeader("✨ مختار ليك (بيتعلم من اهتماماتك)") }
+                            item(key = "h_foryou") { SectionHeader("✨ مختار ليك") }
                             item(key = "r_foryou") {
                                 LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     items(forYou, key = { "fy_" + it.id }) { d ->
@@ -184,6 +185,7 @@ fun HomeScreen(
                                 Spacer(Modifier.height(8.dp))
                             }
                         }
+                        item(key = "crazy") { CrazyBanner(onCrazy) }
                         // Highest tiers first: Mega → Super → Hot are the most prominent.
                         s.tiers.sortedByDescending { it.minPct }.forEach { tier ->
                             val range = DealMath.tierRange(tier.key, s.tiers) ?: return@forEach
@@ -227,6 +229,21 @@ private fun SearchEntry(onClick: () -> Unit) {
             Icon(Icons.Outlined.Search, null)
             Spacer(Modifier.width(10.dp))
             Text("ابحث عن أي منتج… قلاية، سماعة، iPhone", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun CrazyBanner(onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+            .background(Brush.horizontalGradient(listOf(Color(0xFFB3123A), Color(0xFFE4572E))), RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick).padding(16.dp),
+    ) {
+        Column {
+            Text("🔥 عروض مجنونة", style = MaterialTheme.typography.titleLarge, color = Color.White)
+            Text("عروض طرش وكوبونات و1+1 ومطاعم · أول بأول · عرض الكل ←", style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.9f))
         }
     }
 }
