@@ -138,9 +138,15 @@ internal fun toSaudi(url: String): String = runCatching {
 
 /** Opens SHEIN's own "search by photo" (the camera icon) so the picked photo is searched on SHEIN itself. */
 private val CAMERA_JS = """
-(function(){var s=['[class*="camera"]','[aria-label*="camera" i]','[class*="image-search"]','[class*="imageSearch"]','[class*="pic-search"]','[class*="picSearch"]','[class*="search-img"]'];
- for(var i=0;i<s.length;i++){var e=document.querySelector(s[i]);if(e){e.click();return 'clicked';}}
- var f=document.querySelector('input[type=file]'); if(f){f.click();return 'input';} return 'none';})()
+(function(){
+ function vis(e){var r=e.getBoundingClientRect();return r.width>0&&r.height>0;}
+ var f=Array.prototype.find.call(document.querySelectorAll('input[type=file]'),function(x){return /image/.test(x.accept||'image')});
+ var up=Array.prototype.find.call(document.querySelectorAll('button,a,div,span,li'),function(e){return vis(e)&&e.children.length<3&&/^(ألبوم|الألبوم|رفع صورة|تحميل صورة|اختر صورة|الصور|Album|Upload|Photos|Choose photo)/i.test((e.textContent||'').trim());});
+ if(up){up.click();return 'upload';}
+ var cam=Array.prototype.find.call(document.querySelectorAll('[class*="camera"],[class*="Camera"],[aria-label*="camera" i],[class*="image-search"],[class*="imageSearch"],[class*="search-img"],[class*="picSearch"]'),vis);
+ if(cam){cam.click();return 'camera';}
+ if(f){f.click();return 'input';}
+ return 'none';})()
 """.trimIndent()
 
 /**
@@ -150,10 +156,6 @@ private val CAMERA_JS = """
  */
 private val READ_JS = """
 (function(){
-  if(!window.__dmCam){window.__dmCam=1;document.addEventListener('click',function(e){var t=e.target;
-    for(var i=0;i<6&&t&&t.getAttribute;i++,t=t.parentElement){var c=String((t.className&&t.className.baseVal!==undefined)?t.className.baseVal:(t.className||''));
-      if(/camera|image-?search|imgsearch|pic-?search|search-?img|photo-?search/i.test(c)||/camera|صورة/i.test(t.getAttribute('aria-label')||'')){
-        e.preventDefault();e.stopPropagation();if(window.DM)DM.pickPhoto();return;}}},true);}
   // hide only the small riyal price labels themselves (a CSS rule on "*price*" classes also hid whole result lists → white page)
   document.querySelectorAll('[class*="price"],[class*="Price"],[class*="discount"]').forEach(function(e){
     if(e.getAttribute('data-dmh'))return;var t=e.textContent||'';
@@ -256,6 +258,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
+                    pendingImage?.let { img -> pendingImage = null; callback.onReceiveValue(arrayOf(img)); return true }   // our photo button
                     fileCallback?.onReceiveValue(null); fileCallback = callback
                     chooser.launch("image/*"); return true
                 }
@@ -266,16 +269,25 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     // photo search: our free AI vision reads the photo → SHEIN's own search shows the matching products
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        product = null; message = "بندوّر بالصورة…"; loading = true
+        product = null; message = "بندوّر بالصورة في شي إن…"; pendingImage = uri
         scope.launch {
+            // 1) SHEIN's own photo search: open it and hand it the photo (identical results to SHEIN)
+            var step = 0
+            while (pendingImage != null && step < 14) {
+                if (step == 4) {   // no camera on this page → open a SHEIN results page (its search bar has the camera)
+                    web.evaluateJavascript("(function(){location.href=location.origin+((location.pathname.match(/^\\/[a-z]{2}(?=\\/)/)||[''])[0])+'/pdsearch/dress/';})()", null)
+                    delay(3500)
+                }
+                web.evaluateJavascript(CAMERA_JS, null)
+                delay(1000); step++
+            }
+            if (pendingImage == null) { message = null; return@launch }   // SHEIN took the photo
+            // 2) fallback: describe the photo and search SHEIN with those words
+            pendingImage = null
             c.shein.imageSearchQuery(uri).onSuccess { (q, ar) ->
                 message = "نتايج شبه الصورة" + (if (ar.isNotBlank()) ": $ar" else "")
-                // search on the SHEIN site the user is on (same host and region prefix, e.g. m.shein.com/ar)
-                val js = "(function(){var h=location.hostname;if(!/shein\\.com${'$'}/.test(h))return 'no';" +
-                    "location.href=location.origin+((location.pathname.match(/^\\/[a-z]{2}(?=\\/)/)||[''])[0])+'/pdsearch/'+encodeURIComponent(" +
-                    c.api.json.encodeToString(kotlinx.serialization.json.JsonPrimitive.serializer(), kotlinx.serialization.json.JsonPrimitive(q)) + ")+'/';return 'ok';})()"
-                web.evaluateJavascript(js) { r -> if (!r.contains("ok")) web.loadUrl(searchUrl(q)) }
-            }.onFailure { message = it.message ?: "معرفناش ندور بالصورة دي"; loading = false }
+                web.loadUrl(searchUrl(q))
+            }.onFailure { message = it.message ?: "معرفناش ندور بالصورة دي" }
         }
     }
     bridge.onPick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
