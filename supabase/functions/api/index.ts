@@ -103,6 +103,20 @@ async function sameProduct<T extends { title: string; price: number }>(title: st
   return pool.filter((p) => similarity(p.title, title) >= 0.75 && p.price > price * 0.4 && p.price < price * 2.5);
 }
 
+/** Photo → the words SHEIN's search understands (free AI vision), so a photo search works inside the app. */
+async function imageQuery(b: any) {
+  const data = String(b.image ?? "");
+  if (data.length < 100 || data.length > 1_500_000 || !/^[A-Za-z0-9+/=]+$/.test(data)) return { error: "الصورة مش واضحة" };
+  const g = await gemini("You turn a product photo into a short shopping search query for SHEIN (English, 3-7 words: " +
+    "colour + material/pattern + product type + key details, e.g. 'burgundy chiffon long sleeve maxi dress'). " +
+    'Reply JSON {"query": string, "arabic": short Arabic name of the product}.',
+    [{ role: "user", text: "Product photo:", image: { mime: b.mime === "image/png" ? "image/png" : "image/jpeg", data } }],
+    { json: true, maxTokens: 120, temperature: 0 });
+  if (!g) return { error: "البحث بالصورة مشغول دلوقتي، جرب كمان شوية" };
+  try { const o = JSON.parse(g.text); if (o?.query) return { query: String(o.query).slice(0, 80), arabic: String(o.arabic ?? "").slice(0, 60) }; } catch { /* below */ }
+  return { error: "معرفناش نحدد المنتج من الصورة، جرب صورة أوضح" };
+}
+
 async function verify(dealId: string) {
   const d = (await rest("GET", `deals?select=${COLS}&id=eq.${enc(dealId)}`))[0];
   if (!d) return { error: "العرض ده مبقاش موجود" };
@@ -337,6 +351,7 @@ Deno.serve(async (req) => {
     else if (b.action === "verify") out = await verify(String(b.deal_id ?? ""));
     else if (b.action === "chat") out = await chat(b, uid);
     else if (b.action === "status") out = { ai: geminiConfigured() };
+    else if (b.action === "image_query") out = await imageQuery(b);
     else if (b.action === "phone_report") out = await phoneReport(b, uid);
     else out = { error: "unknown action" };
     return Response.json(out, { headers: CORS });

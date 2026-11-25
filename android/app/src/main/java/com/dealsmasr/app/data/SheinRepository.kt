@@ -32,6 +32,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.put
@@ -194,6 +195,30 @@ class SheinRepository(
             cartDao.insert(item)
             if (item.isPriced()) AddResult.AddedPriced else AddResult.Added
         }.getOrElse { fallback(base, manualPriceSar, it) }
+    }
+
+    /** Photo → SHEIN search words (our server's free AI vision). Returns (query, arabicName) or an error message. */
+    suspend fun imageSearchQuery(uri: Uri): Result<Pair<String, String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            context.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= 640) sample *= 2
+            val bmp = context.contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            } ?: error("الصورة مش واضحة")
+            val k = 640f / maxOf(bmp.width, bmp.height)
+            val small = if (k < 1f) android.graphics.Bitmap.createScaledBitmap(bmp, (bmp.width * k).toInt(), (bmp.height * k).toInt(), true) else bmp
+            val out = java.io.ByteArrayOutputStream()
+            small.compress(android.graphics.Bitmap.CompressFormat.JPEG, 80, out)
+            val b64 = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+            val o = apiProvider.json.parseToJsonElement(supabase.fn("api", buildJsonObject {
+                put("action", "image_query"); put("image", b64); put("mime", "image/jpeg")
+            })).jsonObject
+            o["error"]?.jsonPrimitive?.contentOrNull?.let { error(it) }
+            val q = o["query"]?.jsonPrimitive?.contentOrNull ?: error("معرفناش نحدد المنتج من الصورة")
+            q to (o["arabic"]?.jsonPrimitive?.contentOrNull ?: "")
+        }
     }
 
     /** A product the user picked while browsing SHEIN Saudi in the app (price read from the product page). */

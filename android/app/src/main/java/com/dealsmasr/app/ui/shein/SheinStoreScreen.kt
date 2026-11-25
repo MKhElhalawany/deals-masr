@@ -150,6 +150,10 @@ private val CAMERA_JS = """
  */
 private val READ_JS = """
 (function(){
+  if(!window.__dmCam){window.__dmCam=1;document.addEventListener('click',function(e){var t=e.target;
+    for(var i=0;i<6&&t&&t.getAttribute;i++,t=t.parentElement){var c=String((t.className&&t.className.baseVal!==undefined)?t.className.baseVal:(t.className||''));
+      if(/camera|image-?search|imgsearch|pic-?search|search-?img|photo-?search/i.test(c)||/camera|صورة/i.test(t.getAttribute('aria-label')||'')){
+        e.preventDefault();e.stopPropagation();if(window.DM)DM.pickPhoto();return;}}},true);}
   if(!document.getElementById('dm-hide')){var st=document.createElement('style');st.id='dm-hide';
     st.textContent='[class*="price"],[class*="Price"],[class*="discount-label"],[class*="download-banner"],[class*="app-download"],[class*="open-app"]{visibility:hidden!important}';
     (document.head||document.documentElement).appendChild(st);}
@@ -191,7 +195,14 @@ private fun parse(o: JsonObject): PageProduct? {
         o["retail"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0 }, !egp, s("size"), s("color"), s("needSize") == "true")
 }
 
-@SuppressLint("SetJavaScriptEnabled")
+/** SHEIN's own camera (photo search) button → our photo search (SHEIN's needs its app / camera access). */
+private class PhotoBridge {
+    var onPick: () -> Unit = {}
+    @android.webkit.JavascriptInterface
+    fun pickPhoto() { android.os.Handler(android.os.Looper.getMainLooper()).post { onPick() } }
+}
+
+@SuppressLint("SetJavaScriptEnabled", "JavascriptInterface")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
@@ -216,6 +227,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     val chooser = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         fileCallback?.onReceiveValue(uri?.let { arrayOf(it) }); fileCallback = null
     }
+    val bridge = remember { PhotoBridge() }
     val web = remember {
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -225,6 +237,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             this.settings.javaScriptEnabled = true
             this.settings.domStorageEnabled = true
             this.settings.textZoom = 100
+            addJavascriptInterface(bridge, "DM")   // only "pickPhoto": SHEIN's camera button opens our photo search
             val rewrites = HashMap<String, Int>()
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
@@ -242,8 +255,6 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             }
             webChromeClient = object : WebChromeClient() {
                 override fun onShowFileChooser(view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams): Boolean {
-                    val img = pendingImage
-                    if (img != null) { pendingImage = null; callback.onReceiveValue(arrayOf(img)); return true }
                     fileCallback?.onReceiveValue(null); fileCallback = callback
                     chooser.launch("image/*"); return true
                 }
@@ -251,24 +262,18 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             loadUrl(SHEIN_SA)
         }
     }
-    // photo search: pick a photo, open SHEIN's own camera search and hand it the photo
+    // photo search: our free AI vision reads the photo → SHEIN's own search shows the matching products
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        pendingImage = uri; product = null
-        web.loadUrl(SHEIN_SA)
+        product = null; message = "بندوّر بالصورة…"; loading = true
         scope.launch {
-            repeat(12) {
-                delay(1000)
-                if (pendingImage == null) return@launch          // SHEIN took the photo
-                web.evaluateJavascript(CAMERA_JS, null)
-            }
-            pendingImage?.let { u ->   // SHEIN's photo search didn't open → our team finds it from the photo
-                pendingImage = null
-                c.shein.addByImage(u, null)
-                message = "بعتنا الصورة لفريقنا يدوّر عليها في شي إن ويسعّرها — هتلاقيها في السلة"
-            }
+            c.shein.imageSearchQuery(uri).onSuccess { (q, ar) ->
+                message = "نتايج شبه الصورة" + (if (ar.isNotBlank()) ": $ar" else "")
+                web.loadUrl(searchUrl(q))
+            }.onFailure { message = it.message ?: "معرفناش ندور بالصورة دي"; loading = false }
         }
     }
+    bridge.onPick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
     LaunchedEffect(web) {
         while (true) {
             web.evaluateJavascript(READ_JS) { r ->

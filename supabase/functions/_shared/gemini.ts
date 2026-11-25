@@ -29,7 +29,7 @@ async function models(): Promise<string[]> {
   return chain.names;
 }
 
-export type Turn = { role: "user" | "model"; text: string };
+export type Turn = { role: "user" | "model"; text: string; image?: { mime: string; data: string } };
 
 export async function gemini(system: string, turns: Turn[], opts: { json?: boolean; maxTokens?: number; temperature?: number; search?: boolean } = {}):
   Promise<{ text: string; model: string } | null> {
@@ -43,7 +43,8 @@ export async function gemini(system: string, turns: Turn[], opts: { json?: boole
     const gemma = /gemma/.test(m);
     // Gemma has no system field / JSON mode: the instructions go first in the conversation
     const contents = turns.map((t, i) => ({ role: t.role, parts: [{ text: gemma && i === 0 ? `${system}\n\n${t.text}` +
-      (opts.json ? "\n\nReply with JSON only, no other text." : "") : t.text }] }));
+      (opts.json ? "\n\nReply with JSON only, no other text." : "") : t.text },
+      ...(t.image ? [{ inline_data: { mime_type: t.image.mime, data: t.image.data } }] : [])] }));
     const body: Record<string, unknown> = {
       contents,
       generationConfig: { temperature: opts.temperature ?? 0.4, maxOutputTokens: opts.maxTokens ?? 700,
