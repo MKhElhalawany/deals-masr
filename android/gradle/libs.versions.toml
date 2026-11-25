@@ -19,6 +19,7 @@ securityCrypto = "1.1.0-alpha06"
 firebaseMessaging = "24.1.0"
 
 [libraries]
+androidx-webkit = { group = "androidx.webkit", name = "webkit", version = "1.12.1" }
 mlkit-translate = { group = "com.google.mlkit", name = "translate", version = "17.0.3" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }

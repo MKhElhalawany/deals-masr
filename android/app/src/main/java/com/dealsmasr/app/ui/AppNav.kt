@@ -84,6 +84,9 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
     val scope = rememberCoroutineScope()
     fun fromDrawer(route: String) { scope.launch { drawer.close() }; nav.navigate(route) { launchSingleTop = true } }
 
+    // open SHEIN quietly in the background shortly after start, so the SHEIN tab shows instantly
+    val appCtx = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(2500); runCatching { com.dealsmasr.app.ui.shein.SheinWeb.get(appCtx) } }
     LaunchedEffect(external) {
         when {
             external.sharedText != null -> nav.navigate("shein_cart") { launchSingleTop = true }

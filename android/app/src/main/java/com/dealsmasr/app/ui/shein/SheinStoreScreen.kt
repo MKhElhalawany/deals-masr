@@ -215,7 +215,7 @@ private const val GROUP_LINK = "https://chat.whatsapp.com/BgvVPa3GyLbI8yuVyonmlM
  * black screen). If Android kills the page's renderer, a fresh browser is created and the last page reopened.
  */
 @SuppressLint("StaticFieldLeak")
-private object SheinWeb {
+internal object SheinWeb {
     private var view: WebView? = null
     private var ctxWrap: MutableContextWrapper? = null
     var lastUrl: String = SHEIN_SA
@@ -236,7 +236,16 @@ private object SheinWeb {
             settings.mediaPlaybackRequiresUserGesture = false
             settings.userAgentString = settings.userAgentString.replace("; wv)", ")").replace(Regex("Version/[\\d.]+ "), "")
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+            // Android adds an "X-Requested-With: <app id>" header to the page's requests; SHEIN's APIs reject it
+            // (CORS) and the search / photo-search pages stay white. Real Chrome never sends it — so neither do we.
+            if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST))
+                androidx.webkit.WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())
+            if (androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.OFF_SCREEN_PRERASTER))
+                androidx.webkit.WebSettingsCompat.setOffscreenPreRaster(settings, true)   // smoother scrolling
+            settings.cacheMode = android.webkit.WebSettings.LOAD_DEFAULT
+            setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
             setBackgroundColor(android.graphics.Color.WHITE)
+            webViewClient = WebViewClient()   // keep pages inside (the screen sets its own client when shown)
             loadUrl(lastUrl, AR_HEADERS)
             view = this
         }
@@ -247,7 +256,7 @@ private object SheinWeb {
         view = null
     }
 
-    fun log(kind: String, msg: String) = synchronized(logs) { if (logs.size < 40) logs += kind to msg.take(300) }
+    fun log(kind: String, msg: String) = synchronized(logs) { if (logs.size < 40) logs += kind to msg.take(500) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -328,7 +337,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                     else -> null
                 }
             }
-            if (++tick % 30 == 0) {
+            if (++tick % 8 == 0) {
                 val batch = synchronized(SheinWeb.logs) { SheinWeb.logs.toList().also { SheinWeb.logs.clear() } }
                 if (batch.isNotEmpty()) launch {
                     runCatching {
