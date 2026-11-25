@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Checkroom
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.DirectionsCar
@@ -148,24 +149,52 @@ fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> 
     val c = appContainer()
     val scope = rememberCoroutineScope()
     val favs by c.deals.favoriteIds.collectAsState(initial = emptyList())
-    val items = remember(category) { mutableStateListOf<DealDto>() }
-    var page by remember(category) { mutableStateOf(0) }
-    var loading by remember(category) { mutableStateOf(true) }
-    var end by remember(category) { mutableStateOf(false) }
-    var error by remember(category) { mutableStateOf<String?>(null) }
+    var query by rememberSaveable(category) { mutableStateOf("") }
+    var applied by rememberSaveable(category) { mutableStateOf("") }
+    var stores by remember(category) { mutableStateOf(setOf<String>()) }
+    var minPct by rememberSaveable(category) { mutableStateOf(0) }
+    var sort by rememberSaveable(category) { mutableStateOf("discount") }
+    val key = listOf(category, applied, stores.sorted().joinToString(), minPct, sort).joinToString("|")
+    val items = remember(key) { mutableStateListOf<DealDto>() }
+    var page by remember(key) { mutableStateOf(0) }
+    var loading by remember(key) { mutableStateOf(true) }
+    var end by remember(key) { mutableStateOf(false) }
+    var error by remember(key) { mutableStateOf<String?>(null) }
     suspend fun load() {
         loading = true; error = null
-        runCatching { c.deals.categoryDeals(category, page) }
+        runCatching { c.deals.categoryDeals(category, page, applied, stores, minPct, sort) }
             .onSuccess { items.addAll(it.filter { d -> items.none { x -> x.id == d.id } }); end = it.size < 60; page++ }
             .onFailure { error = "مقدرناش نجيب العروض، اتأكد من النت" }
         loading = false
     }
-    LaunchedEffect(category) { load() }
+    LaunchedEffect(key) { load() }
     Scaffold(topBar = {
         TopAppBar(title = { Text(category.replace("/", " · ")) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
     }) { pad ->
         Column(Modifier.padding(pad)) {
+            androidx.compose.material3.OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                placeholder = { Text("دوّر في ${category.substringAfter('/')}…") }, singleLine = true, shape = RoundedCornerShape(24.dp),
+                leadingIcon = { Icon(Icons.Outlined.Search, null) },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { applied = query }))
+            androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item {
+                    androidx.compose.material3.FilterChip(selected = sort != "discount", onClick = {
+                        sort = when (sort) { "discount" -> "price_asc"; "price_asc" -> "price_desc"; "price_desc" -> "newest"; else -> "discount" }
+                    }, label = { Text(when (sort) { "price_asc" -> "الأرخص"; "price_desc" -> "الأغلى"; "newest" -> "الأحدث"; else -> "أعلى خصم" }) })
+                }
+                items(listOf(30, 50, 70).size) { i ->
+                    val p = listOf(30, 50, 70)[i]
+                    androidx.compose.material3.FilterChip(selected = minPct == p, onClick = { minPct = if (minPct == p) 0 else p }, label = { Text("+$p%") })
+                }
+                items(com.dealsmasr.app.ui.deals.STORES.size) { i ->
+                    val (id, name) = com.dealsmasr.app.ui.deals.STORES[i]
+                    androidx.compose.material3.FilterChip(selected = id in stores, onClick = { stores = if (id in stores) stores - id else stores + id },
+                        label = { Text(name) })
+                }
+            }
             when {
                 items.isEmpty() && loading -> SkeletonGrid()
                 items.isEmpty() && error != null -> ErrorState(error!!, { scope.launch { load() } })
@@ -190,8 +219,9 @@ fun CategoryScreen(category: String, onBack: () -> Unit, onProduct: (String) -> 
 val CRAZY_FILTERS: List<Pair<String, List<String>>> = listOf(
     "الكل" to emptyList(),
     "🎟️ كوبونات" to listOf("كوبون", "كود", "code", "coupon", "promo"),
-    "1+1" to listOf("1+1", "١+١", "اشتري 1", "اشتري واحد", "buy 1", "buy one", "الثانية مجان", "التانية مجان", "الثاني مجان"),
-    "🍔 مطاعم وأكل" to listOf("مطعم", "طلبات", "talabat", "بريدفاست", "breadfast", "بيتزا", "برجر", "وجبة", "كنتاكي", "ماكدونالدز", "مشويات", "فطار"),
+    "🎁 Buy 1 Get 1" to listOf("1+1", "١+١", "اشتري 1", "اشتري واحد", "buy 1", "buy one", "الثانية مجان", "التانية مجان", "الثاني مجان"),
+    "🍔 مطاعم وخروجات" to listOf("مطعم", "طلبات", "talabat", "بريدفاست", "breadfast", "بيتزا", "برجر", "وجبة", "كنتاكي", "ماكدونالدز", "مشويات", "فطار",
+        "خروجة", "خروجات", "سينما", "كافيه", "ملاهي", "تذاكر", "رحلة"),
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -200,7 +230,7 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
     val c = appContainer()
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    var filter by rememberSaveable { mutableStateOf(initialFilter.coerceIn(0, CRAZY_FILTERS.size - 1)) }
+    val filter = initialFilter.coerceIn(0, CRAZY_FILTERS.size - 1)
     val posts = remember(filter) { mutableStateListOf<DealsRepository.TgPost>() }
     var loading by remember(filter) { mutableStateOf(true) }
     var end by remember(filter) { mutableStateOf(false) }
@@ -214,16 +244,10 @@ fun CrazyDealsScreen(initialFilter: Int = 0, onBack: () -> Unit) {
     }
     LaunchedEffect(filter) { load() }
     Scaffold(topBar = {
-        TopAppBar(title = { Text("🔥 عروض مجنونة") },
+        TopAppBar(title = { Text(if (filter == 0) "🔥 عروض مجنونة" else CRAZY_FILTERS[filter].first) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "رجوع") } })
     }) { pad0 ->
       Column(Modifier.padding(pad0)) {
-        androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(CRAZY_FILTERS.size) { i ->
-                androidx.compose.material3.FilterChip(selected = filter == i, onClick = { filter = i }, label = { Text(CRAZY_FILTERS[i].first) })
-            }
-        }
         val pad = PaddingValues(0.dp)
         when {
             posts.isEmpty() && loading -> Column(Modifier.padding(pad)) { SkeletonGrid() }

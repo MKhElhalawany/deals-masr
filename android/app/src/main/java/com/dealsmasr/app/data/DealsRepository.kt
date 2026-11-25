@@ -258,9 +258,16 @@ class DealsRepository(
     }
 
     /** Deals of one side-menu category ("main" or "main/sub"), straight from the server (always current). */
-    suspend fun categoryDeals(category: String, page: Int = 0): List<DealDto> {
-        val f = if ('/' in category) "category=eq.${enc(category)}" else "category=like.${enc("$category/*")}"
-        return rows(supabase.select("deals", "select=$cols&active=eq.true&$f&order=deal_pct.desc.nullslast&limit=60&offset=${page * 60}"))
+    suspend fun categoryDeals(category: String, page: Int = 0, query: String = "", stores: Set<String> = emptySet(),
+                              minPct: Int = 0, sort: String = "discount"): List<DealDto> {
+        val f = mutableListOf(if ('/' in category) "category=eq.${enc(category)}" else "category=like.${enc("$category/*")}")
+        query.trim().split(Regex("\\s+")).filter { it.length >= 2 }.take(3).forEach { w ->
+            f += "title=ilike.${enc("*" + w.replace(Regex("[(),*]"), "") + "*")}"
+        }
+        if (stores.isNotEmpty()) f += "store_id=in.(${stores.joinToString(",")})"
+        if (minPct > 0) f += "deal_pct=gte.$minPct"
+        val order = when (sort) { "price_asc" -> "current_price.asc"; "price_desc" -> "current_price.desc"; "newest" -> "deal_since.desc"; else -> "deal_pct.desc.nullslast" }
+        return rows(supabase.select("deals", "select=$cols&active=eq.true&${f.joinToString("&")}&order=$order&limit=60&offset=${page * 60}"))
             .map { toDeal(it) }
     }
 

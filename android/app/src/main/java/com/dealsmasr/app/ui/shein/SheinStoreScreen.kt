@@ -157,35 +157,38 @@ private val READ_JS = """
   if(!m){var pe0=document.querySelector('[class*="price"]');return JSON.stringify({page:'list',cur:pe0?pe0.textContent.slice(0,30):''});}
   var gid=m[1];
   function num(t){if(!t)return null;var x=String(t).replace(/[٠-٩]/g,function(d){return '٠١٢٣٤٥٦٧٨٩'.indexOf(d)}).replace(/٫/g,'.').replace(/,/g,'').match(/\d+(\.\d+)?/);return x?parseFloat(x[0]):null;}
-  var retail=null, sale=null, cur='';
-  var root=document.querySelector('[class*="product-intro"],[class*="goods-detail"],[class*="productIntro"]')||document.body;
-  var del=root.querySelector('del,s,[class*="del-price"],[class*="retail"],[class*="original"],[class*="crossed"]');
-  if(del){retail=num(del.textContent);cur=del.textContent;}
-  var pe=root.querySelector('[class*="price"]'); if(pe){sale=num(pe.textContent); if(!cur)cur=pe.textContent;}
+  var retail=null, cur='';
+  // the product's own price block = the first price on the page; its HIGHEST amount is the regular price
+  // (not the sale or "with coupon" price). It follows the size the user picked.
+  var pe=Array.prototype.find.call(document.querySelectorAll('[class*="price"],[class*="Price"]'),function(e){return /\d/.test(e.textContent)&&e.textContent.length<120;});
+  if(pe){var box=pe;for(var k=0;k<4&&box.parentElement&&box.parentElement.textContent.length<220;k++)box=box.parentElement;
+    cur=box.textContent;var txt=box.textContent.replace(/[٠-٩]/g,function(d){return '٠١٢٣٤٥٦٧٨٩'.indexOf(d)}).replace(/٫/g,'.').replace(/,/g,'').replace(/\d+(\.\d+)?\s*%/g,' ').replace(/\d+(\.\d+)?\s*[kK+]/g,' ');
+    var nums=(txt.match(/\d+(?:\.\d+)?/g)||[]).map(parseFloat).filter(function(v){return v>=1&&v<100000;});
+    if(nums.length)retail=Math.max.apply(null,nums);}
   if(!retail){var html=document.documentElement.innerHTML, i=html.indexOf('"goods_id":"'+gid+'"'); if(i<0)i=html.indexOf('"goods_id":'+gid);
     if(i>=0){var seg=html.slice(i,i+20000), r=seg.match(/"retailPrice"\s*:\s*\{[^{}]*?"amount"\s*:\s*"?([\d.]+)"?[^{}]*?\}/);
       if(r){retail=parseFloat(r[1]); var sy=r[0].match(/"amountWithSymbol"\s*:\s*"([^"]*)"/); if(sy)cur=sy[1];}}}
-  if(!retail) retail=sale;
-  var sar=/(ر\.?\s?س|SR|SAR|﷼)/i.test(cur), egp=/(EGP|ج\.?\s?م|جنيه|E£)/i.test(cur);
+  var sizeBox=Array.prototype.find.call(document.querySelectorAll('[class*="size"]'),function(e){return /(^|\s)(XXS|XS|S|M|L|XL|XXL|\d{2})(\s|$)/.test(e.textContent)&&e.children.length>2;});
+  var sar=/(ر\.?\s?س|SR|SAR|﷼|\u20C1)/i.test(cur), egp=/(EGP|ج\.?\s?م|جنيه|E£)/i.test(cur);
   function picked(re){var el=Array.prototype.find.call(document.querySelectorAll('[class*="active"],[class*="selected"],[aria-checked="true"],[aria-selected="true"]'),
     function(e){return re.test(e.className||'')||re.test((e.parentElement&&e.parentElement.className)||'')});
     if(!el)return '';var im=el.querySelector('img');return ((im&&(im.alt||im.title))||el.getAttribute('aria-label')||el.title||el.textContent||'').trim().slice(0,40);}
   var t=(document.querySelector('h1')||{}).textContent||(document.querySelector('meta[property="og:title"]')||{}).content||'';
   var img=(document.querySelector('meta[property="og:image"]')||{}).content||'';
   return JSON.stringify({page:'product',cur:String(cur).slice(0,30),gid:gid,url:u.split('#')[0],title:t.trim().slice(0,200),image:img,retail:retail,sar:sar,egp:egp,
-    size:picked(/size/i),color:picked(/colou?r/i)});
+    size:picked(/size/i),color:picked(/colou?r/i),needSize:!!sizeBox});
 })()
 """.trimIndent()
 
 private data class PageProduct(val gid: String, val url: String, val title: String, val image: String?, val retailSar: Double?,
-    val currencyOk: Boolean, val size: String, val color: String)
+    val currencyOk: Boolean, val size: String, val color: String, val needSize: Boolean)
 
 private fun parse(o: JsonObject): PageProduct? {
     if (o["page"]?.jsonPrimitive?.contentOrNull != "product") return null
     fun s(k: String) = o[k]?.jsonPrimitive?.contentOrNull.orEmpty()
     val egp = o["egp"]?.jsonPrimitive?.contentOrNull == "true"
     return PageProduct(s("gid"), s("url"), s("title"), s("image").ifBlank { null }?.let { if (it.startsWith("//")) "https:$it" else it },
-        o["retail"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0 }, !egp, s("size"), s("color"))
+        o["retail"]?.jsonPrimitive?.doubleOrNull?.takeIf { it > 0 }, !egp, s("size"), s("color"), s("needSize") == "true")
 }
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -202,7 +205,6 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
     var link by remember { mutableStateOf("") }
     var showLink by remember { mutableStateOf(false) }
     var loading by remember { mutableStateOf(false) }
-    var header by remember { mutableStateOf(true) }
     var product by remember { mutableStateOf<PageProduct?>(null) }
     var sheet by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -246,16 +248,13 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                     chooser.launch("image/*"); return true
                 }
             }
-            setOnScrollChangeListener { _, _, y, _, oldY ->
-                if (y > oldY + 12 && y > 120) header = false else if (y < oldY - 12 || y < 40) header = true
-            }
             loadUrl(SHEIN_SA)
         }
     }
     // photo search: pick a photo, open SHEIN's own camera search and hand it the photo
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        pendingImage = uri; product = null; header = true
+        pendingImage = uri; product = null
         web.loadUrl(SHEIN_SA)
         scope.launch {
             repeat(12) {
@@ -279,7 +278,7 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                 product = o?.let { parse(it) }
                 val cur = o?.get("cur")?.jsonPrimitive?.contentOrNull.orEmpty()
                 otherCurrency = when {
-                    cur.isBlank() || Regex("ر\\.?\\s?س|SR|SAR|﷼", RegexOption.IGNORE_CASE).containsMatchIn(cur) -> null
+                    cur.isBlank() || Regex("ر\\.?\\s?س|SR|SAR|﷼|\u20C1", RegexOption.IGNORE_CASE).containsMatchIn(cur) -> null
                     Regex("BHD|د\\.?\\s?ب").containsMatchIn(cur) -> "البحرين"
                     Regex("AED|د\\.?\\s?إ").containsMatchIn(cur) -> "الإمارات"
                     Regex("KWD|د\\.?\\s?ك").containsMatchIn(cur) -> "الكويت"
@@ -304,58 +303,31 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
         }
     }) { pad ->
         Column(Modifier.padding(pad).fillMaxSize()) {
-            AnimatedVisibility(visible = header) {
-                Column(Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color(0xFF070D1F), Color(0xFF1B2D5C))))) {
-                    Row(Modifier.padding(start = 14.dp, end = 4.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("SHEIN × عروض مصر", color = Gold, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleMedium)
-                            Text("منتجات شي إن لحد باب بيتك · 0 جمارك · 0 مخاطرة · خصومات لحد 80%", color = Color.White,
-                                style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                        }
-                        IconButton(onClick = onCart) {
-                            BadgedBox(badge = { if (cart.isNotEmpty()) Badge { Text("${cart.size}") } }) {
-                                Icon(Icons.Outlined.ShoppingCart, "السلة", tint = Color.White)
-                            }
-                        }
-                    }
-                    TextField(query, { query = it }, Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp).clip(RoundedCornerShape(24.dp)),
-                        placeholder = { Text("دوّر في شي إن… فستان، جزمة، شنطة") }, singleLine = true,
-                        leadingIcon = { Icon(Icons.Outlined.Search, null) },
-                        trailingIcon = {
-                            Row {
-                                IconButton(onClick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
-                                    Icon(Icons.Outlined.Image, "ابحث بالصورة")
-                                }
-                                IconButton(onClick = { showLink = !showLink }) { Icon(Icons.Outlined.Link, "لينك منتج") }
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { if (query.isNotBlank()) open(searchUrl(query)) }),
-                        colors = TextFieldDefaults.colors(focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent))
-                    if (showLink) Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp).padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        OutlinedTextField(link, { link = it }, Modifier.weight(1f), singleLine = true,
-                            placeholder = { Text("الصق لينك منتج من شي إن", color = Color.White.copy(alpha = 0.7f)) },
-                            shape = RoundedCornerShape(20.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Button(onClick = {
-                            val u = SheinLink.firstUrl(link)
-                            if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = ""; showLink = false } else message = "ده مش لينك شي إن"
-                        }) { Text("افتح") }
-                    }
-                    if (product == null) LazyRow(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        items(SHEIN_CATS.size) { i ->
-                            val (label, icon, q) = SHEIN_CATS[i]
-                            Column(Modifier.width(66.dp).clip(RoundedCornerShape(14.dp)).clickable { open(searchUrl(q)) }.padding(2.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(Modifier.size(42.dp).background(Gold.copy(alpha = 0.18f), CircleShape), contentAlignment = Alignment.Center) {
-                                    Icon(icon, null, tint = Gold)
-                                }
-                                Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White, maxLines = 1)
-                            }
-                        }
+            // fixed slim bar (no moving parts): brand · photo search · link · cart
+            Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF070D1F), Color(0xFF1B2D5C))))
+                .padding(start = 12.dp, end = 2.dp, top = 2.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("SHEIN × عروض مصر", color = Gold, fontWeight = FontWeight.Black, style = MaterialTheme.typography.titleSmall)
+                    Text("لحد باب بيتك · 0 جمارك · 0 مخاطرة · خصومات لحد 80%", color = Color.White, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+                IconButton(onClick = { photo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) {
+                    Icon(Icons.Outlined.Image, "ابحث بالصورة", tint = Color.White)
+                }
+                IconButton(onClick = { showLink = !showLink }) { Icon(Icons.Outlined.Link, "لينك منتج", tint = Color.White) }
+                IconButton(onClick = onCart) {
+                    BadgedBox(badge = { if (cart.isNotEmpty()) Badge { Text("${cart.size}") } }) {
+                        Icon(Icons.Outlined.ShoppingCart, "السلة", tint = Color.White)
                     }
                 }
+            }
+            if (showLink) Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(link, { link = it }, Modifier.weight(1f), singleLine = true,
+                    placeholder = { Text("الصق لينك منتج من شي إن") }, shape = RoundedCornerShape(20.dp))
+                Spacer(Modifier.width(6.dp))
+                Button(onClick = {
+                    val u = SheinLink.firstUrl(link)
+                    if (u != null && SheinLink.isSheinUrl(u)) { open(u); link = ""; showLink = false } else message = "ده مش لينك شي إن"
+                }) { Text("افتح") }
             }
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
             otherCurrency?.let { country ->
@@ -368,7 +340,8 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
             message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) }
             AndroidView({ web }, Modifier.weight(1f).fillMaxWidth())
             product?.let { p ->
-                val each = p.retailSar?.takeIf { p.currencyOk }?.let { SheinPricing.line(BigDecimal(it.toString()), 1, cfg).lineTotalEgp }
+                val waitSize = p.needSize && p.size.isBlank()
+                val each = p.retailSar?.takeIf { p.currencyOk && !waitSize }?.let { SheinPricing.line(BigDecimal(it.toString()), 1, cfg).lineTotalEgp }
                 Surface(tonalElevation = 6.dp, shadowElevation = 8.dp) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -377,7 +350,8 @@ fun SheinStoreScreen(onCart: () -> Unit, onCheckout: () -> Unit) {
                                     Text("السعر لحد باب بيتك", style = MaterialTheme.typography.labelMedium)
                                     Text(Money.egp(each), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black,
                                         color = MaterialTheme.colorScheme.primary)
-                                } else Text("اختار المنتج وإحنا هنسعّره لك", style = MaterialTheme.typography.bodyMedium)
+                                } else Text(if (waitSize) "اختار المقاس الأول وهنحسبلك السعر لحد باب بيتك" else "اختار المنتج وإحنا هنسعّره لك",
+                                    style = MaterialTheme.typography.bodyMedium)
                             }
                             Button(onClick = { sheet = true }, modifier = Modifier.height(52.dp)) { Text("اطلب ✓", style = MaterialTheme.typography.titleMedium) }
                         }

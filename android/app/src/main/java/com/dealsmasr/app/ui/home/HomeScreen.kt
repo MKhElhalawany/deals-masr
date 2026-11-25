@@ -126,7 +126,7 @@ fun HomeScreen(
     onFavorites: () -> Unit,
     onSettings: () -> Unit,
     onMenu: () -> Unit,
-    onCrazy: () -> Unit = {},
+    onCrazy: (Int) -> Unit = {},
 ) {
     val vm = appViewModel { DealsViewModel(it.deals, it.settings) }
     val s by vm.state.collectAsStateWithLifecycle()
@@ -185,7 +185,7 @@ fun HomeScreen(
                                 Spacer(Modifier.height(8.dp))
                             }
                         }
-                        item(key = "crazy") { CrazyBanner(onCrazy) }
+                        item(key = "crazy") { CrazyGrid(onCrazy) }
                         // Highest tiers first: Mega → Super → Hot are the most prominent.
                         s.tiers.sortedByDescending { it.minPct }.forEach { tier ->
                             val range = DealMath.tierRange(tier.key, s.tiers) ?: return@forEach
@@ -234,16 +234,26 @@ private fun SearchEntry(onClick: () -> Unit) {
 }
 
 @Composable
-private fun CrazyBanner(onClick: () -> Unit) {
-    Box(
-        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
-            .background(Brush.horizontalGradient(listOf(Color(0xFFB3123A), Color(0xFFE4572E))), RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick).padding(16.dp),
-    ) {
-        Column {
-            Text("🔥 عروض مجنونة", style = MaterialTheme.typography.titleLarge, color = Color.White)
-            Text("عروض طرش وكوبونات و1+1 ومطاعم · أول بأول · عرض الكل ←", style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.9f))
+private fun CrazyGrid(onOpen: (Int) -> Unit) {
+    val tiles = listOf(
+        Triple("🔥 عروض مجنونة", "عروض طرش أول بأول", listOf(Color(0xFFB3123A), Color(0xFFE4572E))) to 0,
+        Triple("🍔 مطاعم وخروجات", "أكل وكافيهات وخروجات", listOf(Color(0xFFE07B00), Color(0xFFF2A93B))) to 3,
+        Triple("🎟️ كوبونات", "أكواد خصم جاهزة", listOf(Color(0xFF0F7B5F), Color(0xFF2BAE87))) to 1,
+        Triple("🎁 Buy 1 Get 1", "اشتري واحد والتاني هدية", listOf(Color(0xFF5B2A86), Color(0xFF8E4FC4))) to 2,
+    )
+    Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        tiles.chunked(2).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                row.forEach { (t, f) ->
+                    Box(Modifier.weight(1f).height(86.dp).background(Brush.horizontalGradient(t.third), RoundedCornerShape(16.dp))
+                        .clickable { onOpen(f) }.padding(12.dp)) {
+                        Column {
+                            Text(t.first, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1)
+                            Text(t.second, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.9f), maxLines = 2)
+                        }
+                    }
+                }
+            }
         }
     }
 }

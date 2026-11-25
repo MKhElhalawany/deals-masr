@@ -131,7 +131,7 @@ fun AppNav(external: ExternalNav, onExternalConsumed: () -> Unit, sharedText: St
                     onFavorites = { nav.navigate("favorites") },
                     onSettings = { nav.navigate("settings") },
                     onMenu = { scope.launch { drawer.open() } },
-                    onCrazy = { nav.navigate("crazy?f=0") },
+                    onCrazy = { f -> nav.navigate("crazy?f=$f") },
                 )
             }
             composable("category/{c}") { e ->
