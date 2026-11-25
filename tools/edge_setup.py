@@ -62,6 +62,11 @@ def main():
         print(f"::add-mask::{gk}", flush=True)
         fsecrets.append({"name": "GEMINI_API_KEY", "value": gk})
     print(f"Gemini key: {'present ✓' if gk else 'MISSING (add the GEMINI_API_KEY secret on GitHub)'}")
+    for name in ("GOOGLE_CSE_KEY", "GOOGLE_CSE_CX"):   # optional: free Google web search (100/day) for price comparison
+        v = os.environ.get(name, "").strip()
+        if v:
+            fsecrets.append({"name": name, "value": v})
+        print(f"{name}: {'present ✓' if v else 'not set (web-wide price search off)'}")
     fsa = os.environ.get("FIREBASE_SERVICE_ACCOUNT", "").strip()
     if fsa:
         import base64
