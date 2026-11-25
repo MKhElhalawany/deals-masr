@@ -37,7 +37,8 @@ export async function gemini(system: string, turns: Turn[], opts: { json?: boole
   let list: string[] = [];
   try { list = await models(); } catch (e) { console.warn("models", String(e)); }
   for (const m of list) {
-    if ((resting.get(m) ?? 0) > Date.now()) continue;
+    const rk = m + (opts.search ? "+search" : "");   // web search has its own (often zero) free quota
+    if ((resting.get(rk) ?? 0) > Date.now()) continue;
     if (opts.search && /gemma/.test(m)) continue;   // web search only on Gemini models
     const gemma = /gemma/.test(m);
     // Gemma has no system field / JSON mode: the instructions go first in the conversation
@@ -57,14 +58,14 @@ export async function gemini(system: string, turns: Turn[], opts: { json?: boole
         const t = (await r.text()).slice(0, 160);
         console.warn("ai", m, r.status, t); aiErrors[m.replace("models/", "") + (opts.search ? "+search" : "")] = `${r.status} ${t}`;
         if (r.status === 404) chain = null;
-        resting.set(m, Date.now() + (r.status === 429 ? 10 * 60_000 : 60_000));
+        resting.set(rk, Date.now() + (r.status === 429 ? (opts.search ? 6 * 3600_000 : 10 * 60_000) : 60_000));
         continue;
       }
       const j = await r.json();
       let text = (j.candidates?.[0]?.content?.parts ?? []).map((p: any) => p.text ?? "").join("").trim();
       if (opts.json) text = text.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "").trim();
       if (text) return { text, model: m.replace("models/", "") };
-    } catch (e) { console.warn("ai error", m, String(e)); resting.set(m, Date.now() + 60_000); }
+    } catch (e) { console.warn("ai error", m, String(e)); resting.set(rk, Date.now() + 60_000); }
   }
   return null;
 }
